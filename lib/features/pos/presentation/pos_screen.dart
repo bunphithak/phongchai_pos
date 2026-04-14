@@ -1,0 +1,1637 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:phongchai_pos/core/utils/thai_date_time.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:phongchai_pos/data/models/product.dart';
+import 'package:phongchai_pos/features/pos/domain/barcode_catalog.dart';
+import 'package:phongchai_pos/features/auth/presentation/login_screen.dart';
+import 'package:phongchai_pos/features/auth/providers/auth_provider.dart';
+import 'package:phongchai_pos/features/pos/domain/cart_item.dart';
+import 'package:phongchai_pos/features/pos/presentation/checkout_dialog.dart';
+import 'package:phongchai_pos/features/pos/presentation/member_register_dialog.dart';
+import 'package:phongchai_pos/features/pos/providers/cart_provider.dart';
+import 'package:phongchai_pos/features/pos/providers/pos_session_provider.dart';
+
+/// สีธีม POS — โทน slate / navy อ่านสบายตา
+const _kHeaderNavy = Color(0xFF1E293B);
+const _kScaffoldBg = Color(0xFFF1F5F9);
+const _kSummaryBorder = Color(0xFFE2E8F0);
+/// ยอดรวมสุทธิ — สีน้ำเงินเข้มให้เด่น
+const _kNetTotalColor = Color(0xFF0D47A1);
+
+String _formatLoyaltyPoints(int points) {
+  final s = points.abs().toString();
+  final buf = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 == 0) {
+      buf.write(',');
+    }
+    buf.write(s[i]);
+  }
+  return buf.toString();
+}
+
+String _formatDiscountField(double v) {
+  if (v == 0) return '';
+  if (v == v.roundToDouble()) return '${v.round()}';
+  return v.toString();
+}
+
+class _PosAppBarDateTime extends StatefulWidget {
+  const _PosAppBarDateTime();
+
+  @override
+  State<_PosAppBarDateTime> createState() => _PosAppBarDateTimeState();
+}
+
+class _PosAppBarDateTimeState extends State<_PosAppBarDateTime> {
+  late Timer _timer;
+  late DateTime _now;
+
+  @override
+  void initState() {
+    super.initState();
+    _now = DateTime.now();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        setState(() => _now = DateTime.now());
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'ขายหน้าร้าน',
+          style: theme.textTheme.titleLarge?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          formatThaiBuddhistDate(_now),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: Colors.white.withValues(alpha: 0.92),
+            height: 1.2,
+          ),
+        ),
+        Text(
+          '${twoDigitTimePart(_now.hour)}:${twoDigitTimePart(_now.minute)}:${twoDigitTimePart(_now.second)} น.',
+          style: theme.textTheme.titleMedium?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class POSScreen extends ConsumerStatefulWidget {
+  const POSScreen({super.key});
+
+  @override
+  ConsumerState<POSScreen> createState() => _POSScreenState();
+}
+
+class _POSScreenState extends ConsumerState<POSScreen> {
+  final _barcodeController = TextEditingController();
+  final _barcodeFocus = FocusNode();
+  final _discountController = TextEditingController();
+  final _memberPhoneController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    _barcodeController.dispose();
+    _barcodeFocus.dispose();
+    _discountController.dispose();
+    _memberPhoneController.dispose();
+    super.dispose();
+  }
+
+  void _refocusBarcode() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _barcodeFocus.requestFocus();
+      }
+    });
+  }
+
+  Future<void> _onBarcodeSubmitted(String value) async {
+    final code = value.trim();
+    if (code.isEmpty) {
+      _refocusBarcode();
+      return;
+    }
+
+    final product = productForBarcode(code);
+    if (product == null) {
+      _barcodeController.clear();
+      if (!mounted) return;
+      await _showProductNotFoundDialog(code);
+      if (mounted) {
+        _refocusBarcode();
+      }
+      return;
+    }
+
+    ref.read(cartProvider.notifier).addOrIncrementProduct(product);
+    _barcodeController.clear();
+    _refocusBarcode();
+  }
+
+  Future<void> _showProductNotFoundDialog(String code) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final colorScheme = theme.colorScheme;
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+          contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+          titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          icon: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: colorScheme.errorContainer.withValues(alpha: 0.55),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.inventory_2_outlined,
+              color: colorScheme.error,
+              size: 32,
+            ),
+          ),
+          title: Text(
+            'ไม่พบสินค้า',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: _kHeaderNavy,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'ไม่มีรหัสนี้ในระบบ กรุณาตรวจสอบบาร์โค้ดหรือลองสแกนใหม่',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  height: 1.45,
+                ),
+              ),
+              const SizedBox(height: 16),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.65,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: _kSummaryBorder,
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  child: SelectableText(
+                    code,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.6,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 22),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                style: FilledButton.styleFrom(
+                  backgroundColor: colorScheme.primary,
+                  foregroundColor: colorScheme.onPrimary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: const Text('ตกลง'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _resetDiscountField() {
+    _discountController.clear();
+    ref.read(cartDiscountProvider.notifier).reset();
+  }
+
+  void _resetMemberField() {
+    _memberPhoneController.clear();
+    ref.read(posMemberProvider.notifier).clear();
+  }
+
+  void _performClearCart() {
+    ref.read(cartProvider.notifier).clear();
+    _resetDiscountField();
+    _resetMemberField();
+    _refocusBarcode();
+  }
+
+  Future<void> _onRequestClearCart() async {
+    final lines = ref.read(cartProvider);
+    if (lines.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ตะกร้าว่าง')),
+        );
+      }
+      _refocusBarcode();
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('ล้างตะกร้า?'),
+          content: const Text(
+            'สินค้า ส่วนลด และข้อมูลสมาชิกบนหน้านี้จะถูกล้างทั้งหมด การกระทำนี้ไม่สามารถย้อนกลับได้',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('ยกเลิก'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB91C1C),
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('ล้างตะกร้า'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted) return;
+    if (confirmed == true) {
+      _performClearCart();
+    } else {
+      _refocusBarcode();
+    }
+  }
+
+  Future<void> _onCheckout() async {
+    final total = ref.read(cartGrandTotalProvider);
+    final lines = ref.read(cartProvider);
+    if (lines.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ตะกร้าว่าง')),
+        );
+      }
+      _refocusBarcode();
+      return;
+    }
+
+    final result = await showPosCheckoutDialog(context, grandTotal: total);
+    if (!mounted || result == null) {
+      _refocusBarcode();
+      return;
+    }
+
+    ref.read(cartProvider.notifier).clear();
+    _resetDiscountField();
+    _resetMemberField();
+
+    final methodLabel =
+        result.method == PosPaymentMethod.cash ? 'เงินสด' : 'โอนเงิน';
+    var msg = 'ชำระเงินเรียบร้อย ($methodLabel)';
+    if (result.method == PosPaymentMethod.cash) {
+      msg += ' · เงินทอน ฿${result.change.toStringAsFixed(2)}';
+    }
+    if (result.printReceipt) {
+      msg += ' · พิมพ์ใบเสร็จ';
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+    _refocusBarcode();
+  }
+
+  Future<void> _onHoldBill() async {
+    final lines = ref.read(cartProvider);
+    if (lines.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ไม่มีรายการในตะกร้า')),
+        );
+      }
+      _refocusBarcode();
+      return;
+    }
+
+    final existing = ref.read(heldBillProvider);
+    if (existing != null && mounted) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('มีบิลพักอยู่แล้ว'),
+          content: const Text('ต้องการแทนที่บิลพักเดิมด้วยบิลนี้หรือไม่?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ยกเลิก'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('แทนที่'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) {
+        _refocusBarcode();
+        return;
+      }
+    }
+
+    final discount = ref.read(cartDiscountProvider);
+    final member = ref.read(posMemberProvider);
+    ref.read(heldBillProvider.notifier).setHeld(
+          HeldBillData(
+            cartItems: List<CartItem>.from(lines),
+            discount: discount,
+            billMember: member.billMember,
+            vatEnabled: ref.read(cartVatEnabledProvider),
+          ),
+        );
+    ref.read(cartProvider.notifier).clear();
+    _resetDiscountField();
+    _resetMemberField();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('พักบิลเรียบร้อย')),
+      );
+    }
+    _refocusBarcode();
+  }
+
+  Future<void> _onRecallHeldBill() async {
+    final held = ref.read(heldBillProvider);
+    if (held == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ไม่มีบิลพัก')),
+        );
+      }
+      _refocusBarcode();
+      return;
+    }
+
+    final current = ref.read(cartProvider);
+    if (current.isNotEmpty && mounted) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('ตะกร้ามีสินค้าอยู่'),
+          content: const Text(
+            'เรียกบิลพักจะแทนที่รายการในตะกร้าปัจจุบัน ต้องการดำเนินการต่อหรือไม่?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ยกเลิก'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('เรียกบิลพัก'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) {
+        _refocusBarcode();
+        return;
+      }
+    }
+
+    ref.read(cartProvider.notifier).setItems(List<CartItem>.from(held.cartItems));
+    ref.read(cartDiscountProvider.notifier).replaceWith(held.discount);
+    _discountController.text = _formatDiscountField(held.discount.rawValue);
+    ref
+        .read(cartVatEnabledProvider.notifier)
+        .setEnabled(held.vatEnabled);
+    ref.read(posMemberProvider.notifier).restoreBillMember(held.billMember);
+    ref.read(heldBillProvider.notifier).clearHeld();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('เรียกบิลพักแล้ว')),
+      );
+    }
+    _refocusBarcode();
+  }
+
+  void _onMemberSearch() {
+    ref.read(posMemberProvider.notifier).searchByPhone(_memberPhoneController.text);
+    _refocusBarcode();
+  }
+
+  void _onRegisterMember() {
+    showMemberRegisterDialog(
+      context,
+      ref,
+      onSavedSyncPhoneField: (phone) {
+        _memberPhoneController.text = phone;
+      },
+    ).whenComplete(() {
+      if (mounted) _refocusBarcode();
+    });
+  }
+
+  Future<void> _showEditQuantityDialog(int index, CartItem item) async {
+    final controller = TextEditingController(text: '${item.quantity}');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(item.product.name),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          autofocus: true,
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+          ],
+          decoration: const InputDecoration(
+            labelText: 'จำนวน',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ยกเลิก'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('ตกลง'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (ok == true) {
+      final q = int.tryParse(controller.text.trim());
+      if (q != null) {
+        if (q <= 0) {
+          ref.read(cartProvider.notifier).removeAt(index);
+        } else {
+          ref.read(cartProvider.notifier).setQuantityAt(index, q);
+        }
+      }
+    }
+    controller.dispose();
+    _refocusBarcode();
+  }
+
+  void _logout() {
+    ref.read(authProvider.notifier).logout();
+    ref.read(cartProvider.notifier).clear();
+    ref.read(cartDiscountProvider.notifier).reset();
+    ref.read(cartVatEnabledProvider.notifier).reset();
+    ref.read(posMemberProvider.notifier).clear();
+    ref.read(heldBillProvider.notifier).clearHeld();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final employee = ref.watch(authProvider);
+    if (employee == null) {
+      return const LoginScreen();
+    }
+
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    // F5/F12 ถูกเบราว์เซอร์ใช้ (รีเฟรช / DevTools) และบน macOS มักถูกระบบจับ — ใช้ CallbackShortcuts
+    // และมี Ctrl+Shift+P / Ctrl+Shift+L เป็นทางสำรอง
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.f12): () {
+          if (mounted) unawaited(_onCheckout());
+        },
+        const SingleActivator(LogicalKeyboardKey.f5): () {
+          if (mounted) unawaited(_onRequestClearCart());
+        },
+        const SingleActivator(LogicalKeyboardKey.keyP, control: true, shift: true):
+            () {
+          if (mounted) unawaited(_onCheckout());
+        },
+        const SingleActivator(LogicalKeyboardKey.keyL, control: true, shift: true):
+            () {
+          if (mounted) unawaited(_onRequestClearCart());
+        },
+      },
+      child: Scaffold(
+      backgroundColor: _kScaffoldBg,
+      appBar: AppBar(
+        toolbarHeight: 82,
+        centerTitle: false,
+        title: const _PosAppBarDateTime(),
+        elevation: 0,
+        backgroundColor: _kHeaderNavy,
+        foregroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  employee.name,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  employee.role,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: Colors.white.withValues(alpha: 0.85),
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'ออกจากระบบ',
+            onPressed: _logout,
+            icon: const Icon(Icons.logout_rounded),
+          ),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 960;
+          if (wide) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  flex: 67,
+                  child: _CartPanel(
+                    onHoldBill: _onHoldBill,
+                    onRecallHeldBill: _onRecallHeldBill,
+                    hasHeldBill: ref.watch(heldBillProvider) != null,
+                    onEditLineQuantity: _showEditQuantityDialog,
+                    onRequestClearCart: _onRequestClearCart,
+                  ),
+                ),
+                Expanded(
+                  flex: 33,
+                  child: _SummaryPanel(
+                    memberPhoneController: _memberPhoneController,
+                    onMemberSearch: _onMemberSearch,
+                    onRegisterMember: _onRegisterMember,
+                    onRefocusBarcode: _refocusBarcode,
+                    barcodeController: _barcodeController,
+                    barcodeFocus: _barcodeFocus,
+                    discountController: _discountController,
+                    onBarcodeSubmitted: _onBarcodeSubmitted,
+                    onCheckout: _onCheckout,
+                    onDiscountRawChanged: (v) {
+                      ref.read(cartDiscountProvider.notifier).setRawValue(v);
+                    },
+                  ),
+                ),
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                flex: 3,
+                child: _CartPanel(
+                  onHoldBill: _onHoldBill,
+                  onRecallHeldBill: _onRecallHeldBill,
+                  hasHeldBill: ref.watch(heldBillProvider) != null,
+                  onEditLineQuantity: _showEditQuantityDialog,
+                  onRequestClearCart: _onRequestClearCart,
+                ),
+              ),
+              Flexible(
+                flex: 2,
+                child: Material(
+                  color: colorScheme.surface,
+                  elevation: 6,
+                  shadowColor: Colors.black26,
+                  child: _SummaryPanel(
+                    memberPhoneController: _memberPhoneController,
+                    onMemberSearch: _onMemberSearch,
+                    onRegisterMember: _onRegisterMember,
+                    onRefocusBarcode: _refocusBarcode,
+                    barcodeController: _barcodeController,
+                    barcodeFocus: _barcodeFocus,
+                    discountController: _discountController,
+                    onBarcodeSubmitted: _onBarcodeSubmitted,
+                    onCheckout: _onCheckout,
+                    onDiscountRawChanged: (v) {
+                      ref.read(cartDiscountProvider.notifier).setRawValue(v);
+                    },
+                    scrollable: true,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    ),
+    );
+  }
+}
+
+class _CartPanel extends ConsumerWidget {
+  const _CartPanel({
+    required this.onHoldBill,
+    required this.onRecallHeldBill,
+    required this.hasHeldBill,
+    required this.onEditLineQuantity,
+    required this.onRequestClearCart,
+  });
+
+  final VoidCallback onHoldBill;
+  final VoidCallback onRecallHeldBill;
+  final bool hasHeldBill;
+  final Future<void> Function(int index, CartItem item) onEditLineQuantity;
+  final Future<void> Function() onRequestClearCart;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cart = ref.watch(cartProvider);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shopping_cart_outlined, color: colorScheme.primary),
+              const SizedBox(width: 8),
+              Text(
+                'ตะกร้า',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: _kHeaderNavy,
+                ),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: onHoldBill,
+                icon: const Icon(Icons.pause_circle_outline, size: 18),
+                label: const Text('พักบิล'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: _kHeaderNavy,
+                ),
+              ),
+              if (hasHeldBill) ...[
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: onRecallHeldBill,
+                  icon: const Icon(Icons.play_circle_outline, size: 18),
+                  label: const Text('เรียกบิล'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    foregroundColor: colorScheme.primary,
+                  ),
+                ),
+              ],
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: colorScheme.primaryContainer.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${cart.length} รายการ',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: colorScheme.onPrimaryContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: cart.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.inventory_2_outlined,
+                          size: 56,
+                          color: colorScheme.outline,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'สแกนบาร์โค้ดเพื่อเพิ่มสินค้า',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'ทดลอง: 123 (น้ำดื่ม), 456 (ข้าวสาร)',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.outline,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : ScrollConfiguration(
+                    behavior: ScrollConfiguration.of(context).copyWith(
+                      physics: const ClampingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
+                    ),
+                    child: CustomScrollView(
+                      cacheExtent: 400,
+                      slivers: [
+                        SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) {
+                              final item = cart[index];
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (index > 0)
+                                    Divider(
+                                      height: 1,
+                                      thickness: 1,
+                                      color: _kSummaryBorder.withValues(
+                                        alpha: 0.65,
+                                      ),
+                                    ),
+                                  _CartLineTile(
+                                    key: ValueKey(item.product.id),
+                                    index: index,
+                                    item: item,
+                                    onOpenQuantityDialog: () =>
+                                        onEditLineQuantity(index, item),
+                                  ),
+                                ],
+                              );
+                            },
+                            childCount: cart.length,
+                            addAutomaticKeepAlives: false,
+                          ),
+                        ),
+                        SliverToBoxAdapter(
+                          child: _CartListClearFooter(
+                            enabled: cart.isNotEmpty,
+                            onRequestClearCart: onRequestClearCart,
+                            colorScheme: colorScheme,
+                            theme: theme,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CartListClearFooter extends StatelessWidget {
+  const _CartListClearFooter({
+    required this.enabled,
+    required this.onRequestClearCart,
+    required this.colorScheme,
+    required this.theme,
+  });
+
+  final bool enabled;
+  final Future<void> Function() onRequestClearCart;
+  final ColorScheme colorScheme;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 10, 4, 2),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: _kSummaryBorder.withValues(alpha: 0.65),
+          ),
+          const SizedBox(height: 6),
+          Tooltip(
+            message: 'ล้างตะกร้า (F5 หรือ Ctrl+Shift+L)',
+            child: TextButton.icon(
+              onPressed: enabled ? () => onRequestClearCart() : null,
+              icon: const Icon(
+                Icons.delete_outline_rounded,
+                size: 18,
+                color: Color(0xFFDC2626),
+              ),
+              label: Text(
+                'ล้างตะกร้า',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: const Color(0xFFB91C1C),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFB91C1C),
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ),
+          Text(
+            'F5 · Ctrl+Shift+L',
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontSize: 10,
+              color: colorScheme.outline,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CartLineTile extends ConsumerStatefulWidget {
+  const _CartLineTile({
+    super.key,
+    required this.index,
+    required this.item,
+    required this.onOpenQuantityDialog,
+  });
+
+  final int index;
+  final CartItem item;
+  final VoidCallback onOpenQuantityDialog;
+
+  @override
+  ConsumerState<_CartLineTile> createState() => _CartLineTileState();
+}
+
+class _CartLineTileState extends ConsumerState<_CartLineTile> {
+  late final TextEditingController _qtyController;
+  late final FocusNode _qtyFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _qtyController = TextEditingController(text: '${widget.item.quantity}');
+    _qtyFocus = FocusNode();
+    _qtyFocus.addListener(_onQtyFocusChange);
+  }
+
+  @override
+  void dispose() {
+    _qtyFocus.removeListener(_onQtyFocusChange);
+    _qtyFocus.dispose();
+    _qtyController.dispose();
+    super.dispose();
+  }
+
+  void _onQtyFocusChange() {
+    if (!_qtyFocus.hasFocus) {
+      _commitQuantity();
+    }
+  }
+
+  void _commitQuantity() {
+    final raw = _qtyController.text.trim();
+    final notifier = ref.read(cartProvider.notifier);
+    final idx = widget.index;
+
+    if (raw.isEmpty) {
+      _qtyController.text = '${widget.item.quantity}';
+      return;
+    }
+
+    final parsed = int.tryParse(raw);
+    if (parsed == null) {
+      _qtyController.text = '${widget.item.quantity}';
+      return;
+    }
+
+    if (parsed <= 0) {
+      notifier.removeAt(idx);
+      return;
+    }
+
+    notifier.setQuantityAt(idx, parsed);
+    if (mounted) {
+      _qtyController.text = '$parsed';
+    }
+  }
+
+  @override
+  void didUpdateWidget(_CartLineTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final qtyChanged = oldWidget.item.quantity != widget.item.quantity;
+    final productChanged = oldWidget.item.product.id != widget.item.product.id;
+    if ((qtyChanged || productChanged) && !_qtyFocus.hasFocus) {
+      _qtyController.text = '${widget.item.quantity}';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final product = widget.item.product;
+    final index = widget.index;
+    const thumbSize = 44.0;
+
+    return Material(
+      color: colorScheme.surface,
+      child: ListTile(
+        dense: true,
+        visualDensity: const VisualDensity(horizontal: 0, vertical: -2),
+        minLeadingWidth: thumbSize,
+        horizontalTitleGap: 8,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        onTap: widget.onOpenQuantityDialog,
+        leading: _ProductThumbnail(product: product, size: thumbSize),
+        title: Text(
+          product.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: _kHeaderNavy,
+          ),
+        ),
+        subtitle: Text(
+          '฿${product.price.toStringAsFixed(2)} / ชิ้น',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+        trailing: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 200),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.remove_rounded, size: 18),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 28,
+                  minHeight: 28,
+                ),
+                tooltip: 'ลดจำนวน',
+                onPressed: () {
+                  ref.read(cartProvider.notifier).decrementAt(index);
+                },
+              ),
+              SizedBox(
+                width: 36,
+                child: TextField(
+                  controller: _qtyController,
+                  focusNode: _qtyFocus,
+                  textAlign: TextAlign.center,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                  ],
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      vertical: 4,
+                      horizontal: 2,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                  ),
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                  onSubmitted: (_) => _commitQuantity(),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.add_rounded, size: 18),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 28,
+                  minHeight: 28,
+                ),
+                tooltip: 'เพิ่มจำนวน',
+                onPressed: () {
+                  ref.read(cartProvider.notifier).incrementAt(index);
+                },
+              ),
+              SizedBox(
+                width: 56,
+                child: Text(
+                  '฿${widget.item.lineTotal.toStringAsFixed(2)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: colorScheme.primary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: Icon(
+                  Icons.close_rounded,
+                  size: 18,
+                  color: colorScheme.error,
+                ),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 26,
+                  minHeight: 26,
+                ),
+                tooltip: 'ลบรายการนี้',
+                onPressed: () {
+                  ref.read(cartProvider.notifier).removeAt(index);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProductThumbnail extends StatelessWidget {
+  const _ProductThumbnail({required this.product, this.size = 72});
+
+  final Product product;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    Widget placeholder() {
+      return ColoredBox(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        child: Icon(
+          Icons.image_outlined,
+          color: theme.colorScheme.outline,
+          size: size * 0.42,
+        ),
+      );
+    }
+
+    Widget imageChild;
+    final asset = product.imageAsset;
+    final url = product.imageUrl;
+    if (asset != null) {
+      imageChild = Image.asset(
+        asset,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (context, error, stackTrace) => placeholder(),
+      );
+    } else if (url != null) {
+      imageChild = Image.network(
+        url,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        headers: const {'User-Agent': 'PhongchaiPOS/1.0'},
+        errorBuilder: (context, error, stackTrace) => placeholder(),
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                value: loadingProgress.expectedTotalBytes != null
+                    ? loadingProgress.cumulativeBytesLoaded /
+                        loadingProgress.expectedTotalBytes!
+                    : null,
+              ),
+            ),
+          );
+        },
+      );
+    } else {
+      imageChild = placeholder();
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: imageChild,
+      ),
+    );
+  }
+}
+
+class _SummaryPanel extends ConsumerWidget {
+  const _SummaryPanel({
+    required this.memberPhoneController,
+    required this.onMemberSearch,
+    required this.onRegisterMember,
+    required this.onRefocusBarcode,
+    required this.barcodeController,
+    required this.barcodeFocus,
+    required this.discountController,
+    required this.onBarcodeSubmitted,
+    required this.onCheckout,
+    required this.onDiscountRawChanged,
+    this.scrollable = false,
+  });
+
+  final TextEditingController memberPhoneController;
+  final VoidCallback onMemberSearch;
+  final VoidCallback onRegisterMember;
+  final VoidCallback onRefocusBarcode;
+  final TextEditingController barcodeController;
+  final FocusNode barcodeFocus;
+  final TextEditingController discountController;
+  final void Function(String) onBarcodeSubmitted;
+  final VoidCallback onCheckout;
+  final void Function(double) onDiscountRawChanged;
+  final bool scrollable;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final subtotal = ref.watch(cartSubtotalProvider);
+    final discAmount = ref.watch(cartDiscountAmountProvider);
+    final vat = ref.watch(cartVatProvider);
+    final grand = ref.watch(cartGrandTotalProvider);
+    final vatEnabled = ref.watch(cartVatEnabledProvider);
+    final member = ref.watch(posMemberProvider);
+    final discountState = ref.watch(cartDiscountProvider);
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+
+    final children = <Widget>[
+          Text(
+            'ข้อมูลสมาชิก',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: _kHeaderNavy,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: memberPhoneController,
+                  keyboardType: TextInputType.phone,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    labelText: 'เบอร์โทรศัพท์',
+                    hintText: 'เช่น 0812345678',
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    isDense: true,
+                  ),
+                  onSubmitted: (_) => onMemberSearch(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonal(
+                onPressed: onMemberSearch,
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+                child: const Text('ค้นหา'),
+              ),
+            ],
+          ),
+          if (member.hasMember) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFBFDBFE)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    member.billMember!.name,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: _kHeaderNavy,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.stars_rounded,
+                        size: 18,
+                        color: colorScheme.tertiary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'แต้มสะสม ${_formatLoyaltyPoints(member.billMember!.loyaltyPoints)} คะแนน',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: onRegisterMember,
+              icon: const Icon(Icons.person_add_alt_1_outlined, size: 20),
+              label: const Text('สมัครสมาชิก'),
+              style: TextButton.styleFrom(
+                foregroundColor: colorScheme.primary,
+                textStyle: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          if (member.searchedNotFound && !member.hasMember) ...[
+            const SizedBox(height: 8),
+            Text(
+              'ไม่พบสมาชิกจากเบอร์นี้',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.error,
+              ),
+            ),
+          ],
+          const SizedBox(height: 20),
+          Text(
+            'สรุปยอด',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: _kHeaderNavy,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: barcodeController,
+            focusNode: barcodeFocus,
+            autofocus: true,
+            keyboardType: TextInputType.text,
+            textInputAction: TextInputAction.done,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+            ),
+            decoration: InputDecoration(
+              labelText: 'สแกนบาร์โค้ด',
+              hintText: 'พิมพ์แล้วกด Enter',
+              prefixIcon: Container(
+                margin: const EdgeInsets.only(left: 8, right: 4),
+                child: CircleAvatar(
+                  backgroundColor: colorScheme.primary.withValues(alpha: 0.12),
+                  child: Icon(
+                    Icons.qr_code_scanner_rounded,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 52,
+                minHeight: 48,
+              ),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(
+                vertical: 18,
+                horizontal: 16,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: colorScheme.primary, width: 2),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(
+                  color: colorScheme.primary.withValues(alpha: 0.45),
+                  width: 2,
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: colorScheme.primary, width: 2.5),
+              ),
+            ),
+            onSubmitted: onBarcodeSubmitted,
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9a-zA-Z\-]')),
+            ],
+          ),
+          const SizedBox(height: 24),
+          _SummaryRow(
+            label: 'ยอดรวมสินค้า',
+            value: subtotal,
+            muted: false,
+          ),
+          if (discAmount > 0) ...[
+            const SizedBox(height: 10),
+            _SummaryRow(
+              label: discountState.kind == DiscountKind.percent
+                  ? 'ส่วนลด (${_formatDiscountField(discountState.rawValue.clamp(0, 100))}%)'
+                  : 'ส่วนลด',
+              value: discAmount,
+              muted: true,
+              asDeduction: true,
+            ),
+          ],
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Checkbox(
+                value: vatEnabled,
+                onChanged: (v) {
+                  if (v != null) {
+                    ref.read(cartVatEnabledProvider.notifier).setEnabled(v);
+                    onRefocusBarcode();
+                  }
+                },
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+              Expanded(
+                child: Text(
+                  'ภาษี VAT 7%',
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              Text(
+                '฿${vat.toStringAsFixed(2)}',
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'ประเภทส่วนลด',
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 6),
+          SegmentedButton<DiscountKind>(
+            segments: const [
+              ButtonSegment(
+                value: DiscountKind.baht,
+                label: Text('บาท'),
+              ),
+              ButtonSegment(
+                value: DiscountKind.percent,
+                label: Text('%'),
+              ),
+            ],
+            selected: {discountState.kind},
+            onSelectionChanged: (s) {
+              ref.read(cartDiscountProvider.notifier).setKind(s.first);
+              onRefocusBarcode();
+            },
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: discountController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+            ],
+            decoration: InputDecoration(
+              labelText: discountState.kind == DiscountKind.baht
+                  ? 'จำนวนส่วนลด (บาท)'
+                  : 'ส่วนลด (%)',
+              prefixText: discountState.kind == DiscountKind.baht ? '฿ ' : null,
+              suffixText: discountState.kind == DiscountKind.percent ? '%' : null,
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            onChanged: (s) {
+              final v = double.tryParse(s.trim()) ?? 0;
+              onDiscountRawChanged(v);
+            },
+            onEditingComplete: onRefocusBarcode,
+          ),
+          const SizedBox(height: 20),
+          Divider(height: 1, color: _kSummaryBorder),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  'ยอดรวมสุทธิ',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: _kHeaderNavy,
+                  ),
+                ),
+              ),
+              Text(
+                '฿${grand.toStringAsFixed(2)}',
+                style: theme.textTheme.displaySmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: _kNetTotalColor,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          if (!scrollable) const Spacer(),
+          if (scrollable) const SizedBox(height: 24),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            height: 60,
+            child: FilledButton(
+              onPressed: onCheckout,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF15803D),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                minimumSize: const Size(double.infinity, 60),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                textStyle: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              child: const Text('ชำระเงิน'),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'ชำระเงิน (F12 หรือ Ctrl+Shift+P)',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+    ];
+
+    final content = Padding(
+      padding: EdgeInsets.fromLTRB(20, 20, 20, 16 + bottomInset),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
+        children: children,
+      ),
+    );
+
+    if (scrollable) {
+      return SingleChildScrollView(child: content);
+    }
+
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Color(0xFFFAFCFE),
+        border: Border(left: BorderSide(color: _kSummaryBorder)),
+      ),
+      child: content,
+    );
+  }
+}
+
+class _SummaryRow extends StatelessWidget {
+  const _SummaryRow({
+    required this.label,
+    required this.value,
+    required this.muted,
+    this.asDeduction = false,
+  });
+
+  final String label;
+  final double value;
+  final bool muted;
+  final bool asDeduction;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final valueText = asDeduction
+        ? '-฿${value.toStringAsFixed(2)}'
+        : '฿${value.toStringAsFixed(2)}';
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.bodyLarge?.copyWith(
+            color: muted
+                ? theme.colorScheme.onSurfaceVariant
+                : theme.colorScheme.onSurface,
+          ),
+        ),
+        Text(
+          valueText,
+          style: theme.textTheme.bodyLarge?.copyWith(
+            fontWeight: FontWeight.w600,
+            color: asDeduction
+                ? theme.colorScheme.error
+                : (muted
+                    ? theme.colorScheme.onSurfaceVariant
+                    : theme.colorScheme.onSurface),
+          ),
+        ),
+      ],
+    );
+  }
+}
