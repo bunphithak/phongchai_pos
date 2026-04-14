@@ -10,5 +10,5 @@ class CartItem {
   final Product product;
   final int quantity;
 
-  double get lineTotal => product.price * quantity;
+  double get lineTotal => product.totalPriceForQuantity(quantity);
 }

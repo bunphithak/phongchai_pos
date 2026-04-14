@@ -1,0 +1,18 @@
+{
+  "meta": {
+    "description": "Mock: ตอบแทน GET /api/v1/members/lookup?phone= — ใช้เบอร์ 10 หลัก (ตัวเลข)",
+    "version": 1
+  },
+  "members": [
+    {
+      "phone": "0812345678",
+      "name": "คุณสมชาย ใจดี",
+      "loyalty_points": 1280
+    },
+    {
+      "phone": "0899999999",
+      "name": "คุณสมหญิง รักสบาย",
+      "loyalty_points": 560
+    }
+  ]
+}

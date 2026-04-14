@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:phongchai_pos/core/utils/pdf_generator.dart';
+import 'package:phongchai_pos/core/utils/tax_invoice_print.dart';
 import 'package:phongchai_pos/core/utils/thai_date_time.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phongchai_pos/data/models/product.dart';
@@ -11,13 +13,22 @@ import 'package:phongchai_pos/features/auth/providers/auth_provider.dart';
 import 'package:phongchai_pos/features/pos/domain/cart_item.dart';
 import 'package:phongchai_pos/features/pos/presentation/checkout_dialog.dart';
 import 'package:phongchai_pos/features/pos/presentation/member_register_dialog.dart';
+import 'package:phongchai_pos/features/pos/domain/sale_record.dart';
+import 'package:phongchai_pos/features/pos/presentation/order_history_screen.dart';
+import 'package:phongchai_pos/features/pos/presentation/tax_invoice_form_dialog.dart';
 import 'package:phongchai_pos/features/pos/providers/cart_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/pos_session_provider.dart';
+import 'package:phongchai_pos/features/pos/providers/sales_history_provider.dart';
+import 'package:phongchai_pos/features/pos/providers/tax_invoice_buyer_provider.dart';
 
 /// สีธีม POS — โทน slate / navy อ่านสบายตา
 const _kHeaderNavy = Color(0xFF1E293B);
+
+/// แถบบนแบบมืดสนิท (navbar ไอคอน)
+const _kAppBarDark = Color(0xFF121212);
 const _kScaffoldBg = Color(0xFFF1F5F9);
 const _kSummaryBorder = Color(0xFFE2E8F0);
+
 /// ยอดรวมสุทธิ — สีน้ำเงินเข้มให้เด่น
 const _kNetTotalColor = Color(0xFF0D47A1);
 
@@ -39,14 +50,69 @@ String _formatDiscountField(double v) {
   return v.toString();
 }
 
-class _PosAppBarDateTime extends StatefulWidget {
-  const _PosAppBarDateTime();
+/// ไอคอนแถบบนแบบเส้น (outline) บนพื้นมืด
+Widget _posNavIconButton({
+  required IconData icon,
+  required String tooltip,
+  VoidCallback? onPressed,
+  bool selected = false,
+}) {
+  final box = Container(
+    width: 54,
+    height: 74,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(12),
+      color: selected
+          ? Colors.white.withValues(alpha: 0.12)
+          : Colors.white.withValues(alpha: 0.06),
+      border: Border.all(
+        color: selected
+            ? Colors.white.withValues(alpha: 0.4)
+            : Colors.white.withValues(alpha: 0.22),
+        width: 1,
+      ),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, color: Colors.white.withValues(alpha: 0.95), size: 24),
+        SizedBox(height: 10,),
+        Text(tooltip, style: TextStyle(color: Colors.white, fontSize: 10),textAlign: TextAlign.center,),
+      ],
+    ),
+  );
 
-  @override
-  State<_PosAppBarDateTime> createState() => _PosAppBarDateTimeState();
+  if (onPressed == null) {
+    return Tooltip(message: tooltip, child: box);
+  }
+
+  return Tooltip(
+    message: tooltip,
+    child: Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: box,
+      ),
+    ),
+  );
 }
 
-class _PosAppBarDateTimeState extends State<_PosAppBarDateTime> {
+/// หัวแถบ POS: วันที่ + ไอคอนร้าน / ประวัติ (ไม่มีช่องค้นหาในแถบ)
+class _PosAppBarHeader extends StatefulWidget {
+  const _PosAppBarHeader({required this.onOpenHistory});
+
+  final VoidCallback onOpenHistory;
+
+  @override
+  State<_PosAppBarHeader> createState() => _PosAppBarHeaderState();
+}
+
+class _PosAppBarHeaderState extends State<_PosAppBarHeader> {
   late Timer _timer;
   late DateTime _now;
 
@@ -70,34 +136,63 @@ class _PosAppBarDateTimeState extends State<_PosAppBarDateTime> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'ขายหน้าร้าน',
-          style: theme.textTheme.titleLarge?.copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'ขายหน้าร้าน',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: Colors.white.withValues(alpha: 0.92),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                formatThaiBuddhistDate(_now),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.white.withValues(alpha: 0.65),
+                  height: 1.2,
+                ),
+              ),
+              Text(
+                '${twoDigitTimePart(_now.hour)}:${twoDigitTimePart(_now.minute)}:${twoDigitTimePart(_now.second)} น.',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: Colors.white.withValues(alpha: 0.9),
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
           ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          formatThaiBuddhistDate(_now),
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: Colors.white.withValues(alpha: 0.92),
-            height: 1.2,
+          const SizedBox(width: 14),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(width: 10),
+                  _posNavIconButton(
+                    icon: Icons.receipt_long_outlined,
+                    tooltip: 'ประวัติการขาย',
+                    onPressed: widget.onOpenHistory,
+                  ),
+                ],
+              ),
+            ],
           ),
-        ),
-        Text(
-          '${twoDigitTimePart(_now.hour)}:${twoDigitTimePart(_now.minute)}:${twoDigitTimePart(_now.second)} น.',
-          style: theme.textTheme.titleMedium?.copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.w700,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -213,9 +308,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
                     alpha: 0.65,
                   ),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: _kSummaryBorder,
-                  ),
+                  border: Border.all(color: _kSummaryBorder),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -267,6 +360,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     ref.read(cartProvider.notifier).clear();
     _resetDiscountField();
     _resetMemberField();
+    ref.read(taxInvoiceBuyerProvider.notifier).clear();
     _refocusBarcode();
   }
 
@@ -274,9 +368,9 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     final lines = ref.read(cartProvider);
     if (lines.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ตะกร้าว่าง')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('ตะกร้าว่าง')));
       }
       _refocusBarcode();
       return;
@@ -321,9 +415,9 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     final lines = ref.read(cartProvider);
     if (lines.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ตะกร้าว่าง')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('ตะกร้าว่าง')));
       }
       _refocusBarcode();
       return;
@@ -335,33 +429,149 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       return;
     }
 
+    final snapshotLines = List<CartItem>.from(lines);
+    final member = ref.read(posMemberProvider);
+    final subtotal = ref.read(cartSubtotalProvider);
+    final discAmount = ref.read(cartDiscountAmountProvider);
+    final net = ref.read(cartNetSubtotalProvider);
+    final vat = ref.read(cartVatProvider);
+    final vatEnabled = ref.read(cartVatEnabledProvider);
+    final soldAt = DateTime.now();
+    final invoiceNo =
+        'INV-${soldAt.toIso8601String().replaceAll(RegExp(r'[^0-9]'), '')}';
+
+    final taxBuyer = ref.read(taxInvoiceBuyerProvider);
+    final invoiceData = TaxInvoiceData(
+      issuedAt: soldAt,
+      invoiceNo: invoiceNo,
+      lines: snapshotLines,
+      customerName: member.billMember?.name,
+      customerPhone: member.billMember?.phone,
+      buyerInvoice: taxBuyer.hasAnyInput ? taxBuyer : null,
+      subtotal: subtotal,
+      discountAmount: discAmount,
+      netBeforeVat: net,
+      vatAmount: vat,
+      vatEnabled: vatEnabled,
+      grandTotal: total,
+      method: result.method,
+      cashReceived: result.cashReceived,
+      change: result.change,
+    );
+
+    await ref
+        .read(salesHistoryProvider.notifier)
+        .recordSale(
+          SaleRecord(
+            id: '${soldAt.microsecondsSinceEpoch}_$invoiceNo',
+            soldAt: soldAt,
+            invoiceNo: invoiceNo,
+            lines: snapshotLines,
+            subtotal: subtotal,
+            discountAmount: discAmount,
+            netBeforeVat: net,
+            vatAmount: vat,
+            vatEnabled: vatEnabled,
+            grandTotal: total,
+            method: result.method,
+            cashReceived: result.cashReceived,
+            change: result.change,
+            memberName: member.billMember?.name,
+            memberPhone: member.billMember?.phone,
+          ),
+        );
+
     ref.read(cartProvider.notifier).clear();
     _resetDiscountField();
     _resetMemberField();
+    ref.read(taxInvoiceBuyerProvider.notifier).clear();
 
-    final methodLabel =
-        result.method == PosPaymentMethod.cash ? 'เงินสด' : 'โอนเงิน';
-    var msg = 'ชำระเงินเรียบร้อย ($methodLabel)';
-    if (result.method == PosPaymentMethod.cash) {
-      msg += ' · เงินทอน ฿${result.change.toStringAsFixed(2)}';
-    }
-    if (result.printReceipt) {
-      msg += ' · พิมพ์ใบเสร็จ';
-    }
+    await _showPostCheckoutSuccess(result: result, invoiceData: invoiceData);
+  }
 
+  Future<void> _printTaxInvoice(TaxInvoiceData data) async {
+    await printTaxInvoiceWithFallback(context: context, data: data);
+  }
+
+  Future<void> _showPostCheckoutSuccess({
+    required PosCheckoutResult result,
+    required TaxInvoiceData invoiceData,
+  }) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final colorScheme = theme.colorScheme;
+        final methodLabel = result.method == PosPaymentMethod.cash
+            ? 'เงินสด'
+            : 'โอนเงิน';
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          icon: Icon(
+            Icons.check_circle_rounded,
+            color: colorScheme.primary,
+            size: 48,
+          ),
+          title: const Text('ชำระเงินสำเร็จ'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('วิธีชำระ: $methodLabel', style: theme.textTheme.bodyLarge),
+              if (result.method == PosPaymentMethod.cash) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'เงินทอน ฿${result.change.toStringAsFixed(2)}',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+              if (result.printReceipt) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'ตัวเลือก “พิมพ์ใบเสร็จ” ในหน้าชำระเงินถูกเปิดไว้ (สำหรับเครื่องพิมพ์ใบเสร็จความร้อน)',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actionsAlignment: MainAxisAlignment.end,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('ปิด'),
+            ),
+            FilledButton.icon(
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              label: const Text('ดู PDF แล้วพิมพ์'),
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                unawaited(_printTaxInvoice(invoiceData));
+              },
+            ),
+          ],
+        );
+      },
+    );
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      _refocusBarcode();
     }
-    _refocusBarcode();
   }
 
   Future<void> _onHoldBill() async {
     final lines = ref.read(cartProvider);
     if (lines.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ไม่มีรายการในตะกร้า')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('ไม่มีรายการในตะกร้า')));
       }
       _refocusBarcode();
       return;
@@ -394,21 +604,26 @@ class _POSScreenState extends ConsumerState<POSScreen> {
 
     final discount = ref.read(cartDiscountProvider);
     final member = ref.read(posMemberProvider);
-    ref.read(heldBillProvider.notifier).setHeld(
+    final taxBuyer = ref.read(taxInvoiceBuyerProvider);
+    ref
+        .read(heldBillProvider.notifier)
+        .setHeld(
           HeldBillData(
             cartItems: List<CartItem>.from(lines),
             discount: discount,
             billMember: member.billMember,
             vatEnabled: ref.read(cartVatEnabledProvider),
+            taxBuyer: taxBuyer,
           ),
         );
     ref.read(cartProvider.notifier).clear();
     _resetDiscountField();
     _resetMemberField();
+    ref.read(taxInvoiceBuyerProvider.notifier).clear();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('พักบิลเรียบร้อย')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('พักบิลเรียบร้อย')));
     }
     _refocusBarcode();
   }
@@ -417,9 +632,9 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     final held = ref.read(heldBillProvider);
     if (held == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ไม่มีบิลพัก')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('ไม่มีบิลพัก')));
       }
       _refocusBarcode();
       return;
@@ -452,25 +667,28 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       }
     }
 
-    ref.read(cartProvider.notifier).setItems(List<CartItem>.from(held.cartItems));
+    ref
+        .read(cartProvider.notifier)
+        .setItems(List<CartItem>.from(held.cartItems));
     ref.read(cartDiscountProvider.notifier).replaceWith(held.discount);
     _discountController.text = _formatDiscountField(held.discount.rawValue);
-    ref
-        .read(cartVatEnabledProvider.notifier)
-        .setEnabled(held.vatEnabled);
+    ref.read(cartVatEnabledProvider.notifier).setEnabled(held.vatEnabled);
     ref.read(posMemberProvider.notifier).restoreBillMember(held.billMember);
+    ref.read(taxInvoiceBuyerProvider.notifier).setFromForm(held.taxBuyer);
     ref.read(heldBillProvider.notifier).clearHeld();
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('เรียกบิลพักแล้ว')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('เรียกบิลพักแล้ว')));
     }
     _refocusBarcode();
   }
 
   void _onMemberSearch() {
-    ref.read(posMemberProvider.notifier).searchByPhone(_memberPhoneController.text);
+    ref
+        .read(posMemberProvider.notifier)
+        .searchByPhone(_memberPhoneController.text);
     _refocusBarcode();
   }
 
@@ -496,9 +714,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
           controller: controller,
           keyboardType: TextInputType.number,
           autofocus: true,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-          ],
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           decoration: const InputDecoration(
             labelText: 'จำนวน',
             border: OutlineInputBorder(),
@@ -537,7 +753,14 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     ref.read(cartDiscountProvider.notifier).reset();
     ref.read(cartVatEnabledProvider.notifier).reset();
     ref.read(posMemberProvider.notifier).clear();
+    ref.read(taxInvoiceBuyerProvider.notifier).clear();
     ref.read(heldBillProvider.notifier).clearHeld();
+  }
+
+  void _openTaxInvoiceForm() {
+    showTaxInvoiceFormDialog(context, ref).whenComplete(() {
+      if (mounted) _refocusBarcode();
+    });
   }
 
   @override
@@ -560,67 +783,119 @@ class _POSScreenState extends ConsumerState<POSScreen> {
         const SingleActivator(LogicalKeyboardKey.f5): () {
           if (mounted) unawaited(_onRequestClearCart());
         },
-        const SingleActivator(LogicalKeyboardKey.keyP, control: true, shift: true):
-            () {
+        const SingleActivator(
+          LogicalKeyboardKey.keyP,
+          control: true,
+          shift: true,
+        ): () {
           if (mounted) unawaited(_onCheckout());
         },
-        const SingleActivator(LogicalKeyboardKey.keyL, control: true, shift: true):
-            () {
+        const SingleActivator(
+          LogicalKeyboardKey.keyL,
+          control: true,
+          shift: true,
+        ): () {
           if (mounted) unawaited(_onRequestClearCart());
         },
       },
       child: Scaffold(
-      backgroundColor: _kScaffoldBg,
-      appBar: AppBar(
-        toolbarHeight: 82,
-        centerTitle: false,
-        title: const _PosAppBarDateTime(),
-        elevation: 0,
-        backgroundColor: _kHeaderNavy,
-        foregroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  employee.name,
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
+        backgroundColor: _kScaffoldBg,
+        appBar: AppBar(
+          toolbarHeight: 104,
+          centerTitle: false,
+          titleSpacing: 0,
+          title: Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: _PosAppBarHeader(
+              onOpenHistory: () {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const OrderHistoryScreen(),
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  employee.role,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+                );
+              },
             ),
           ),
-          IconButton(
-            tooltip: 'ออกจากระบบ',
-            onPressed: _logout,
-            icon: const Icon(Icons.logout_rounded),
-          ),
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final wide = constraints.maxWidth >= 960;
-          if (wide) {
-            return Row(
+          elevation: 0,
+          backgroundColor: _kAppBarDark,
+          foregroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          actions: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    employee.name,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    employee.role,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.white.withValues(alpha: 0.85),
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'ออกจากระบบ',
+              onPressed: _logout,
+              icon: const Icon(Icons.logout_rounded),
+            ),
+          ],
+        ),
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 960;
+            if (wide) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    flex: 67,
+                    child: _CartPanel(
+                      onHoldBill: _onHoldBill,
+                      onRecallHeldBill: _onRecallHeldBill,
+                      hasHeldBill: ref.watch(heldBillProvider) != null,
+                      onEditLineQuantity: _showEditQuantityDialog,
+                      onRequestClearCart: _onRequestClearCart,
+                    ),
+                  ),
+                  Expanded(
+                    flex: 33,
+                    child: _SummaryPanel(
+                      memberPhoneController: _memberPhoneController,
+                      onMemberSearch: _onMemberSearch,
+                      onRegisterMember: _onRegisterMember,
+                      onRefocusBarcode: _refocusBarcode,
+                      barcodeController: _barcodeController,
+                      barcodeFocus: _barcodeFocus,
+                      discountController: _discountController,
+                      onBarcodeSubmitted: _onBarcodeSubmitted,
+                      onCheckout: _onCheckout,
+                      onOpenTaxInvoiceForm: _openTaxInvoiceForm,
+                      onDiscountRawChanged: (v) {
+                        ref.read(cartDiscountProvider.notifier).setRawValue(v);
+                      },
+                    ),
+                  ),
+                ],
+              );
+            }
+            return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
-                  flex: 67,
+                  flex: 3,
                   child: _CartPanel(
                     onHoldBill: _onHoldBill,
                     onRecallHeldBill: _onRecallHeldBill,
@@ -629,67 +904,35 @@ class _POSScreenState extends ConsumerState<POSScreen> {
                     onRequestClearCart: _onRequestClearCart,
                   ),
                 ),
-                Expanded(
-                  flex: 33,
-                  child: _SummaryPanel(
-                    memberPhoneController: _memberPhoneController,
-                    onMemberSearch: _onMemberSearch,
-                    onRegisterMember: _onRegisterMember,
-                    onRefocusBarcode: _refocusBarcode,
-                    barcodeController: _barcodeController,
-                    barcodeFocus: _barcodeFocus,
-                    discountController: _discountController,
-                    onBarcodeSubmitted: _onBarcodeSubmitted,
-                    onCheckout: _onCheckout,
-                    onDiscountRawChanged: (v) {
-                      ref.read(cartDiscountProvider.notifier).setRawValue(v);
-                    },
+                Flexible(
+                  flex: 2,
+                  child: Material(
+                    color: colorScheme.surface,
+                    elevation: 6,
+                    shadowColor: Colors.black26,
+                    child: _SummaryPanel(
+                      memberPhoneController: _memberPhoneController,
+                      onMemberSearch: _onMemberSearch,
+                      onRegisterMember: _onRegisterMember,
+                      onRefocusBarcode: _refocusBarcode,
+                      barcodeController: _barcodeController,
+                      barcodeFocus: _barcodeFocus,
+                      discountController: _discountController,
+                      onBarcodeSubmitted: _onBarcodeSubmitted,
+                      onCheckout: _onCheckout,
+                      onOpenTaxInvoiceForm: _openTaxInvoiceForm,
+                      onDiscountRawChanged: (v) {
+                        ref.read(cartDiscountProvider.notifier).setRawValue(v);
+                      },
+                      scrollable: true,
+                    ),
                   ),
                 ),
               ],
             );
-          }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                flex: 3,
-                child: _CartPanel(
-                  onHoldBill: _onHoldBill,
-                  onRecallHeldBill: _onRecallHeldBill,
-                  hasHeldBill: ref.watch(heldBillProvider) != null,
-                  onEditLineQuantity: _showEditQuantityDialog,
-                  onRequestClearCart: _onRequestClearCart,
-                ),
-              ),
-              Flexible(
-                flex: 2,
-                child: Material(
-                  color: colorScheme.surface,
-                  elevation: 6,
-                  shadowColor: Colors.black26,
-                  child: _SummaryPanel(
-                    memberPhoneController: _memberPhoneController,
-                    onMemberSearch: _onMemberSearch,
-                    onRegisterMember: _onRegisterMember,
-                    onRefocusBarcode: _refocusBarcode,
-                    barcodeController: _barcodeController,
-                    barcodeFocus: _barcodeFocus,
-                    discountController: _discountController,
-                    onBarcodeSubmitted: _onBarcodeSubmitted,
-                    onCheckout: _onCheckout,
-                    onDiscountRawChanged: (v) {
-                      ref.read(cartDiscountProvider.notifier).setRawValue(v);
-                    },
-                    scrollable: true,
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+          },
+        ),
       ),
-    ),
     );
   }
 }
@@ -714,6 +957,46 @@ class _CartPanel extends ConsumerWidget {
     final cart = ref.watch(cartProvider);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final cartRows = <_CartDisplayRow>[];
+    for (var i = 0; i < cart.length; i++) {
+      final item = cart[i];
+      final breakdown = item.product.breakdownForQuantity(item.quantity);
+      if (breakdown.isEmpty) {
+        cartRows.add(
+          _CartDisplayRow(
+            sourceIndex: i,
+            item: item,
+            part: null,
+            allowEdit: true,
+          ),
+        );
+        continue;
+      }
+
+      // ถ้าแตกได้แค่ 1 แถวและยังเป็นหน่วยฐานเดิม ให้แสดงแบบรายการปกติ
+      if (breakdown.length == 1 && breakdown.first.unit == item.product.unitLabel) {
+        cartRows.add(
+          _CartDisplayRow(
+            sourceIndex: i,
+            item: item,
+            part: null,
+            allowEdit: true,
+          ),
+        );
+        continue;
+      }
+
+      for (var j = 0; j < breakdown.length; j++) {
+        cartRows.add(
+          _CartDisplayRow(
+            sourceIndex: i,
+            item: item,
+            part: breakdown[j],
+            allowEdit: true,
+          ),
+        );
+      }
+    }
 
     return Padding(
       padding: const EdgeInsets.all(20),
@@ -755,7 +1038,10 @@ class _CartPanel extends ConsumerWidget {
               ],
               const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: colorScheme.primaryContainer.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(20),
@@ -811,7 +1097,7 @@ class _CartPanel extends ConsumerWidget {
                         SliverList(
                           delegate: SliverChildBuilderDelegate(
                             (context, index) {
-                              final item = cart[index];
+                              final row = cartRows[index];
                               return Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -824,16 +1110,23 @@ class _CartPanel extends ConsumerWidget {
                                       ),
                                     ),
                                   _CartLineTile(
-                                    key: ValueKey(item.product.id),
-                                    index: index,
-                                    item: item,
+                                    key: ValueKey(
+                                      '${row.item.product.id}_${row.sourceIndex}_${row.part?.unit ?? 'base'}_${row.part?.unitCount ?? row.item.quantity}',
+                                    ),
+                                    index: row.sourceIndex,
+                                    item: row.item,
+                                    displayPart: row.part,
+                                    allowEdit: row.allowEdit,
                                     onOpenQuantityDialog: () =>
-                                        onEditLineQuantity(index, item),
+                                        onEditLineQuantity(
+                                          row.sourceIndex,
+                                          row.item,
+                                        ),
                                   ),
                                 ],
                               );
                             },
-                            childCount: cart.length,
+                            childCount: cartRows.length,
                             addAutomaticKeepAlives: false,
                           ),
                         ),
@@ -917,16 +1210,34 @@ class _CartListClearFooter extends StatelessWidget {
   }
 }
 
+class _CartDisplayRow {
+  const _CartDisplayRow({
+    required this.sourceIndex,
+    required this.item,
+    required this.part,
+    required this.allowEdit,
+  });
+
+  final int sourceIndex;
+  final CartItem item;
+  final ProductUnitBreakdown? part;
+  final bool allowEdit;
+}
+
 class _CartLineTile extends ConsumerStatefulWidget {
   const _CartLineTile({
     super.key,
     required this.index,
     required this.item,
+    this.displayPart,
+    this.allowEdit = true,
     required this.onOpenQuantityDialog,
   });
 
   final int index;
   final CartItem item;
+  final ProductUnitBreakdown? displayPart;
+  final bool allowEdit;
   final VoidCallback onOpenQuantityDialog;
 
   @override
@@ -937,10 +1248,20 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
   late final TextEditingController _qtyController;
   late final FocusNode _qtyFocus;
 
+  int get _displayedUnitQty => widget.displayPart?.unitCount ?? widget.item.quantity;
+
+  int get _stepQty {
+    final part = widget.displayPart;
+    if (part == null) return 1;
+    if (part.unitCount <= 0) return 1;
+    final step = part.baseQty ~/ part.unitCount;
+    return step <= 0 ? 1 : step;
+  }
+
   @override
   void initState() {
     super.initState();
-    _qtyController = TextEditingController(text: '${widget.item.quantity}');
+    _qtyController = TextEditingController(text: '$_displayedUnitQty');
     _qtyFocus = FocusNode();
     _qtyFocus.addListener(_onQtyFocusChange);
   }
@@ -963,24 +1284,46 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
     final raw = _qtyController.text.trim();
     final notifier = ref.read(cartProvider.notifier);
     final idx = widget.index;
+    final part = widget.displayPart;
+    final currentQty = widget.item.quantity;
 
     if (raw.isEmpty) {
-      _qtyController.text = '${widget.item.quantity}';
+      _qtyController.text = '$_displayedUnitQty';
       return;
     }
 
     final parsed = int.tryParse(raw);
     if (parsed == null) {
-      _qtyController.text = '${widget.item.quantity}';
+      _qtyController.text = '$_displayedUnitQty';
       return;
     }
 
     if (parsed <= 0) {
-      notifier.removeAt(idx);
+      if (part == null) {
+        notifier.removeAt(idx);
+      } else {
+        final next = currentQty - part.baseQty;
+        if (next <= 0) {
+          notifier.removeAt(idx);
+        } else {
+          notifier.setQuantityAt(idx, next);
+        }
+      }
       return;
     }
 
-    notifier.setQuantityAt(idx, parsed);
+    if (part == null) {
+      notifier.setQuantityAt(idx, parsed);
+    } else {
+      final desiredBaseQty = parsed * _stepQty;
+      final delta = desiredBaseQty - part.baseQty;
+      final next = currentQty + delta;
+      if (next <= 0) {
+        notifier.removeAt(idx);
+      } else {
+        notifier.setQuantityAt(idx, next);
+      }
+    }
     if (mounted) {
       _qtyController.text = '$parsed';
     }
@@ -991,8 +1334,13 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
     super.didUpdateWidget(oldWidget);
     final qtyChanged = oldWidget.item.quantity != widget.item.quantity;
     final productChanged = oldWidget.item.product.id != widget.item.product.id;
+    final partChanged = oldWidget.displayPart?.unitCount != widget.displayPart?.unitCount ||
+        oldWidget.displayPart?.unit != widget.displayPart?.unit ||
+        oldWidget.displayPart?.baseQty != widget.displayPart?.baseQty;
     if ((qtyChanged || productChanged) && !_qtyFocus.hasFocus) {
-      _qtyController.text = '${widget.item.quantity}';
+      _qtyController.text = '$_displayedUnitQty';
+    } else if (partChanged && !_qtyFocus.hasFocus) {
+      _qtyController.text = '$_displayedUnitQty';
     }
   }
 
@@ -1002,6 +1350,12 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
     final colorScheme = theme.colorScheme;
     final product = widget.item.product;
     final index = widget.index;
+    final breakdown = product.breakdownForQuantity(widget.item.quantity);
+    final displayPart = widget.displayPart;
+    final rowSubtotal = displayPart?.totalPrice ?? widget.item.lineTotal;
+    final rowUnitText = displayPart != null
+        ? '฿${displayPart.unitPrice.toStringAsFixed(2)} / ${displayPart.unit}'
+        : '฿${product.displayPriceForShownUnit(widget.item.quantity).toStringAsFixed(2)} / ${product.displayUnitForQuantity(widget.item.quantity)}';
     const thumbSize = 44.0;
 
     return Material(
@@ -1012,10 +1366,14 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
         minLeadingWidth: thumbSize,
         horizontalTitleGap: 8,
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        onTap: widget.onOpenQuantityDialog,
+        onTap: widget.allowEdit && widget.displayPart == null
+            ? widget.onOpenQuantityDialog
+            : null,
         leading: _ProductThumbnail(product: product, size: thumbSize),
         title: Text(
-          product.name,
+          displayPart == null
+              ? product.name
+              : '${product.name} (${displayPart.unitCount} ${displayPart.unit})',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.titleSmall?.copyWith(
@@ -1023,15 +1381,32 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
             color: _kHeaderNavy,
           ),
         ),
-        subtitle: Text(
-          '฿${product.price.toStringAsFixed(2)} / ชิ้น',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
-          ),
-        ),
-        trailing: ConstrainedBox(
+        subtitle: displayPart != null || breakdown.length <= 1
+            ? Text(
+                rowUnitText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final part in breakdown)
+                    Text(
+                      '${part.unitCount} ${part.unit} = ฿${part.totalPrice.toStringAsFixed(2)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
+        trailing: widget.allowEdit
+            ? ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 200),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
@@ -1040,13 +1415,20 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
               IconButton(
                 icon: const Icon(Icons.remove_rounded, size: 18),
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 28,
-                  minHeight: 28,
-                ),
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 tooltip: 'ลดจำนวน',
                 onPressed: () {
-                  ref.read(cartProvider.notifier).decrementAt(index);
+                  final notifier = ref.read(cartProvider.notifier);
+                  if (widget.displayPart == null) {
+                    notifier.decrementAt(index);
+                    return;
+                  }
+                  final next = widget.item.quantity - _stepQty;
+                  if (next <= 0) {
+                    notifier.removeAt(index);
+                  } else {
+                    notifier.setQuantityAt(index, next);
+                  }
                 },
               ),
               SizedBox(
@@ -1057,9 +1439,7 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
                   textAlign: TextAlign.center,
                   keyboardType: TextInputType.number,
                   textInputAction: TextInputAction.done,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                  ],
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: InputDecoration(
                     isDense: true,
                     contentPadding: const EdgeInsets.symmetric(
@@ -1081,19 +1461,21 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
               IconButton(
                 icon: const Icon(Icons.add_rounded, size: 18),
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 28,
-                  minHeight: 28,
-                ),
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 tooltip: 'เพิ่มจำนวน',
                 onPressed: () {
-                  ref.read(cartProvider.notifier).incrementAt(index);
+                  final notifier = ref.read(cartProvider.notifier);
+                  if (widget.displayPart == null) {
+                    notifier.incrementAt(index);
+                    return;
+                  }
+                  notifier.setQuantityAt(index, widget.item.quantity + _stepQty);
                 },
               ),
               SizedBox(
                 width: 56,
                 child: Text(
-                  '฿${widget.item.lineTotal.toStringAsFixed(2)}',
+                  '฿${rowSubtotal.toStringAsFixed(2)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.end,
@@ -1111,10 +1493,7 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
                   color: colorScheme.error,
                 ),
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 26,
-                  minHeight: 26,
-                ),
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
                 tooltip: 'ลบรายการนี้',
                 onPressed: () {
                   ref.read(cartProvider.notifier).removeAt(index);
@@ -1122,7 +1501,21 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
               ),
             ],
           ),
-        ),
+        )
+            : SizedBox(
+                width: 128,
+                child: Text(
+                  '฿${rowSubtotal.toStringAsFixed(2)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: colorScheme.primary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
       ),
     );
   }
@@ -1176,7 +1569,7 @@ class _ProductThumbnail extends StatelessWidget {
                 strokeWidth: 2,
                 value: loadingProgress.expectedTotalBytes != null
                     ? loadingProgress.cumulativeBytesLoaded /
-                        loadingProgress.expectedTotalBytes!
+                          loadingProgress.expectedTotalBytes!
                     : null,
               ),
             ),
@@ -1189,11 +1582,7 @@ class _ProductThumbnail extends StatelessWidget {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: imageChild,
-      ),
+      child: SizedBox(width: size, height: size, child: imageChild),
     );
   }
 }
@@ -1209,6 +1598,7 @@ class _SummaryPanel extends ConsumerWidget {
     required this.discountController,
     required this.onBarcodeSubmitted,
     required this.onCheckout,
+    required this.onOpenTaxInvoiceForm,
     required this.onDiscountRawChanged,
     this.scrollable = false,
   });
@@ -1222,6 +1612,7 @@ class _SummaryPanel extends ConsumerWidget {
   final TextEditingController discountController;
   final void Function(String) onBarcodeSubmitted;
   final VoidCallback onCheckout;
+  final VoidCallback onOpenTaxInvoiceForm;
   final void Function(double) onDiscountRawChanged;
   final bool scrollable;
 
@@ -1236,335 +1627,341 @@ class _SummaryPanel extends ConsumerWidget {
     final vatEnabled = ref.watch(cartVatEnabledProvider);
     final member = ref.watch(posMemberProvider);
     final discountState = ref.watch(cartDiscountProvider);
+    final taxBuyer = ref.watch(taxInvoiceBuyerProvider);
     final bottomInset = MediaQuery.paddingOf(context).bottom;
 
     final children = <Widget>[
-          Text(
-            'ข้อมูลสมาชิก',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: _kHeaderNavy,
+      Text(
+        'ข้อมูลสมาชิก',
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.bold,
+          color: _kHeaderNavy,
+        ),
+      ),
+      const SizedBox(height: 10),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: memberPhoneController,
+              keyboardType: TextInputType.phone,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                labelText: 'เบอร์โทรศัพท์',
+                hintText: 'เช่น 0812345678',
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                isDense: true,
+              ),
+              onSubmitted: (_) => onMemberSearch(),
             ),
           ),
-          const SizedBox(height: 10),
-          Row(
+          const SizedBox(width: 8),
+          FilledButton.tonal(
+            onPressed: onMemberSearch,
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            ),
+            child: const Text('ค้นหา'),
+          ),
+        ],
+      ),
+      if (member.hasMember) ...[
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF6FF),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFBFDBFE)),
+          ),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: TextField(
-                  controller: memberPhoneController,
-                  keyboardType: TextInputType.phone,
-                  textInputAction: TextInputAction.search,
-                  decoration: InputDecoration(
-                    labelText: 'เบอร์โทรศัพท์',
-                    hintText: 'เช่น 0812345678',
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    isDense: true,
-                  ),
-                  onSubmitted: (_) => onMemberSearch(),
+              Text(
+                member.billMember!.name,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: _kHeaderNavy,
                 ),
               ),
-              const SizedBox(width: 8),
-              FilledButton.tonal(
-                onPressed: onMemberSearch,
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                ),
-                child: const Text('ค้นหา'),
-              ),
-            ],
-          ),
-          if (member.hasMember) ...[
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEFF6FF),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFBFDBFE)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              const SizedBox(height: 4),
+              Row(
                 children: [
-                  Text(
-                    member.billMember!.name,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: _kHeaderNavy,
-                    ),
+                  Icon(
+                    Icons.stars_rounded,
+                    size: 18,
+                    color: colorScheme.tertiary,
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.stars_rounded,
-                        size: 18,
-                        color: colorScheme.tertiary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'แต้มสะสม ${_formatLoyaltyPoints(member.billMember!.loyaltyPoints)} คะแนน',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: colorScheme.onSurface,
-                        ),
-                      ),
-                    ],
+                  const SizedBox(width: 6),
+                  Text(
+                    'แต้มสะสม ${_formatLoyaltyPoints(member.billMember!.loyaltyPoints)} คะแนน',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurface,
+                    ),
                   ),
                 ],
               ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: onRegisterMember,
-              icon: const Icon(Icons.person_add_alt_1_outlined, size: 20),
-              label: const Text('สมัครสมาชิก'),
-              style: TextButton.styleFrom(
-                foregroundColor: colorScheme.primary,
-                textStyle: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+            ],
           ),
-          if (member.searchedNotFound && !member.hasMember) ...[
-            const SizedBox(height: 8),
-            Text(
-              'ไม่พบสมาชิกจากเบอร์นี้',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.error,
-              ),
-            ),
-          ],
-          const SizedBox(height: 20),
-          Text(
-            'สรุปยอด',
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: _kHeaderNavy,
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: barcodeController,
-            focusNode: barcodeFocus,
-            autofocus: true,
-            keyboardType: TextInputType.text,
-            textInputAction: TextInputAction.done,
-            style: theme.textTheme.titleMedium?.copyWith(
+        ),
+      ],
+      const SizedBox(height: 8),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: onRegisterMember,
+          icon: const Icon(Icons.person_add_alt_1_outlined, size: 20),
+          label: const Text('สมัครสมาชิก'),
+          style: TextButton.styleFrom(
+            foregroundColor: colorScheme.primary,
+            textStyle: theme.textTheme.titleSmall?.copyWith(
               fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
             ),
-            decoration: InputDecoration(
-              labelText: 'สแกนบาร์โค้ด',
-              hintText: 'พิมพ์แล้วกด Enter',
-              prefixIcon: Container(
-                margin: const EdgeInsets.only(left: 8, right: 4),
-                child: CircleAvatar(
-                  backgroundColor: colorScheme.primary.withValues(alpha: 0.12),
-                  child: Icon(
-                    Icons.qr_code_scanner_rounded,
-                    color: colorScheme.primary,
-                  ),
-                ),
-              ),
-              prefixIconConstraints: const BoxConstraints(
-                minWidth: 52,
-                minHeight: 48,
-              ),
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(
-                vertical: 18,
-                horizontal: 16,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide(color: colorScheme.primary, width: 2),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide(
-                  color: colorScheme.primary.withValues(alpha: 0.45),
-                  width: 2,
-                ),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide(color: colorScheme.primary, width: 2.5),
+          ),
+        ),
+      ),
+      if (member.searchedNotFound && !member.hasMember) ...[
+        const SizedBox(height: 8),
+        Text(
+          'ไม่พบสมาชิกจากเบอร์นี้',
+          style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.error),
+        ),
+      ],
+      const SizedBox(height: 20),
+      Text(
+        'สรุปยอด',
+        style: theme.textTheme.titleLarge?.copyWith(
+          fontWeight: FontWeight.bold,
+          color: _kHeaderNavy,
+        ),
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        controller: barcodeController,
+        focusNode: barcodeFocus,
+        autofocus: true,
+        keyboardType: TextInputType.text,
+        textInputAction: TextInputAction.done,
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.5,
+        ),
+        decoration: InputDecoration(
+          labelText: 'สแกนบาร์โค้ด',
+          hintText: 'พิมพ์แล้วกด Enter',
+          prefixIcon: Container(
+            margin: const EdgeInsets.only(left: 8, right: 4),
+            child: CircleAvatar(
+              backgroundColor: colorScheme.primary.withValues(alpha: 0.12),
+              child: Icon(
+                Icons.qr_code_scanner_rounded,
+                color: colorScheme.primary,
               ),
             ),
-            onSubmitted: onBarcodeSubmitted,
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'[0-9a-zA-Z\-]')),
-            ],
           ),
-          const SizedBox(height: 24),
-          _SummaryRow(
-            label: 'ยอดรวมสินค้า',
-            value: subtotal,
-            muted: false,
+          prefixIconConstraints: const BoxConstraints(
+            minWidth: 52,
+            minHeight: 48,
           ),
-          if (discAmount > 0) ...[
-            const SizedBox(height: 10),
-            _SummaryRow(
-              label: discountState.kind == DiscountKind.percent
-                  ? 'ส่วนลด (${_formatDiscountField(discountState.rawValue.clamp(0, 100))}%)'
-                  : 'ส่วนลด',
-              value: discAmount,
-              muted: true,
-              asDeduction: true,
+          filled: true,
+          fillColor: Colors.white,
+          contentPadding: const EdgeInsets.symmetric(
+            vertical: 18,
+            horizontal: 16,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: colorScheme.primary, width: 2),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(
+              color: colorScheme.primary.withValues(alpha: 0.45),
+              width: 2,
             ),
-          ],
-          const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Checkbox(
-                value: vatEnabled,
-                onChanged: (v) {
-                  if (v != null) {
-                    ref.read(cartVatEnabledProvider.notifier).setEnabled(v);
-                    onRefocusBarcode();
-                  }
-                },
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-              ),
-              Expanded(
-                child: Text(
-                  'ภาษี VAT 7%',
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              Text(
-                '฿${vat.toStringAsFixed(2)}',
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
           ),
-          const SizedBox(height: 14),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: colorScheme.primary, width: 2.5),
+          ),
+        ),
+        onSubmitted: onBarcodeSubmitted,
+        inputFormatters: [
+          FilteringTextInputFormatter.allow(RegExp(r'[0-9a-zA-Z\-]')),
+        ],
+      ),
+      const SizedBox(height: 24),
+      _SummaryRow(label: 'ยอดรวมสินค้า', value: subtotal, muted: false),
+      if (discAmount > 0) ...[
+        const SizedBox(height: 10),
+        _SummaryRow(
+          label: discountState.kind == DiscountKind.percent
+              ? 'ส่วนลด (${_formatDiscountField(discountState.rawValue.clamp(0, 100))}%)'
+              : 'ส่วนลด',
+          value: discAmount,
+          muted: true,
+          asDeduction: true,
+        ),
+      ],
+      const SizedBox(height: 10),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Checkbox(
+            value: vatEnabled,
+            onChanged: (v) {
+              if (v != null) {
+                ref.read(cartVatEnabledProvider.notifier).setEnabled(v);
+                onRefocusBarcode();
+              }
+            },
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          ),
+          Expanded(
+            child: Text(
+              'ภาษี VAT 7%',
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
           Text(
-            'ประเภทส่วนลด',
-            style: theme.textTheme.labelLarge?.copyWith(
+            '฿${vat.toStringAsFixed(2)}',
+            style: theme.textTheme.bodyLarge?.copyWith(
+              fontWeight: FontWeight.w600,
               color: colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(height: 6),
-          SegmentedButton<DiscountKind>(
-            segments: const [
-              ButtonSegment(
-                value: DiscountKind.baht,
-                label: Text('บาท'),
-              ),
-              ButtonSegment(
-                value: DiscountKind.percent,
-                label: Text('%'),
-              ),
-            ],
-            selected: {discountState.kind},
-            onSelectionChanged: (s) {
-              ref.read(cartDiscountProvider.notifier).setKind(s.first);
-              onRefocusBarcode();
-            },
+        ],
+      ),
+      const SizedBox(height: 14),
+      Text(
+        'ประเภทส่วนลด',
+        style: theme.textTheme.labelLarge?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: 6),
+      SegmentedButton<DiscountKind>(
+        segments: const [
+          ButtonSegment(value: DiscountKind.baht, label: Text('บาท')),
+          ButtonSegment(value: DiscountKind.percent, label: Text('%')),
+        ],
+        selected: {discountState.kind},
+        onSelectionChanged: (s) {
+          ref.read(cartDiscountProvider.notifier).setKind(s.first);
+          onRefocusBarcode();
+        },
+      ),
+      const SizedBox(height: 10),
+      TextField(
+        controller: discountController,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+        decoration: InputDecoration(
+          labelText: discountState.kind == DiscountKind.baht
+              ? 'จำนวนส่วนลด (บาท)'
+              : 'ส่วนลด (%)',
+          prefixText: discountState.kind == DiscountKind.baht ? '฿ ' : null,
+          suffixText: discountState.kind == DiscountKind.percent ? '%' : null,
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        onChanged: (s) {
+          final v = double.tryParse(s.trim()) ?? 0;
+          onDiscountRawChanged(v);
+        },
+        onEditingComplete: onRefocusBarcode,
+      ),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(
+        onPressed: onOpenTaxInvoiceForm,
+        icon: const Icon(Icons.receipt_long_outlined, size: 20),
+        label: const Text('📝 กรอกข้อมูลใบกำกับภาษี'),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size.fromHeight(44),
+          alignment: Alignment.center,
+          foregroundColor: _kHeaderNavy,
+        ),
+      ),
+      if (taxBuyer.hasAnyInput) ...[
+        const SizedBox(height: 6),
+        Text(
+          'มีข้อมูลใบกำกับภาษีสำหรับบิลนี้แล้ว',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colorScheme.primary,
+            fontWeight: FontWeight.w600,
           ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: discountController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
-            ],
-            decoration: InputDecoration(
-              labelText: discountState.kind == DiscountKind.baht
-                  ? 'จำนวนส่วนลด (บาท)'
-                  : 'ส่วนลด (%)',
-              prefixText: discountState.kind == DiscountKind.baht ? '฿ ' : null,
-              suffixText: discountState.kind == DiscountKind.percent ? '%' : null,
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+        ),
+      ],
+      const SizedBox(height: 20),
+      Divider(height: 1, color: _kSummaryBorder),
+      const SizedBox(height: 16),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              'ยอดรวมสุทธิ',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: _kHeaderNavy,
               ),
             ),
-            onChanged: (s) {
-              final v = double.tryParse(s.trim()) ?? 0;
-              onDiscountRawChanged(v);
-            },
-            onEditingComplete: onRefocusBarcode,
           ),
-          const SizedBox(height: 20),
-          Divider(height: 1, color: _kSummaryBorder),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  'ยอดรวมสุทธิ',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: _kHeaderNavy,
-                  ),
-                ),
-              ),
-              Text(
-                '฿${grand.toStringAsFixed(2)}',
-                style: theme.textTheme.displaySmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: _kNetTotalColor,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
-          if (!scrollable) const Spacer(),
-          if (scrollable) const SizedBox(height: 24),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            height: 60,
-            child: FilledButton(
-              onPressed: onCheckout,
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF15803D),
-                foregroundColor: Colors.white,
-                elevation: 0,
-                minimumSize: const Size(double.infinity, 60),
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                textStyle: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              child: const Text('ชำระเงิน'),
-            ),
-          ),
-          const SizedBox(height: 6),
           Text(
-            'ชำระเงิน (F12 หรือ Ctrl+Shift+P)',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
+            '฿${grand.toStringAsFixed(2)}',
+            style: theme.textTheme.displaySmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: _kNetTotalColor,
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
+        ],
+      ),
+      if (!scrollable) const Spacer(),
+      if (scrollable) const SizedBox(height: 24),
+      const SizedBox(height: 20),
+      SizedBox(
+        width: double.infinity,
+        height: 60,
+        child: FilledButton(
+          onPressed: onCheckout,
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF15803D),
+            foregroundColor: Colors.white,
+            elevation: 0,
+            minimumSize: const Size(double.infinity, 60),
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            textStyle: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          child: const Text('ชำระเงิน'),
+        ),
+      ),
+      const SizedBox(height: 6),
+      Text(
+        'ชำระเงิน (F12 หรือ Ctrl+Shift+P)',
+        textAlign: TextAlign.center,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+        ),
+      ),
     ];
 
     final content = Padding(
@@ -1627,8 +2024,8 @@ class _SummaryRow extends StatelessWidget {
             color: asDeduction
                 ? theme.colorScheme.error
                 : (muted
-                    ? theme.colorScheme.onSurfaceVariant
-                    : theme.colorScheme.onSurface),
+                      ? theme.colorScheme.onSurfaceVariant
+                      : theme.colorScheme.onSurface),
           ),
         ),
       ],

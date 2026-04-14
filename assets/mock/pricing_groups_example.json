@@ -1,0 +1,74 @@
+{
+  "meta": {
+    "description": "Mock: โครงสร้างราคาตามจำนวน/หน่วยขาย ที่หลังบ้านส่งมาเพื่อคำนวณใน POS",
+    "version": 1
+  },
+  "products": [
+    {
+      "product_id": "8850092094034",
+      "product_name": "น้ำยาเช็ดกระจก",
+      "base_unit": "ชิ้น",
+      "default_unit_price": 79,
+      "pricing_groups": [
+        {
+          "group_code": "RETAIL",
+          "group_name": "ปลีก",
+          "unit": "ชิ้น",
+          "min_qty": 1,
+          "max_qty": 2,
+          "pack_size": 1,
+          "group_total_price": 79,
+          "effective_unit_price": 79,
+          "display_text": "1 ชิ้น ราคา 79 บาท"
+        },
+        {
+          "group_code": "PACK",
+          "group_name": "แพ็ค",
+          "unit": "แพ็ค",
+          "min_qty": 3,
+          "max_qty": 11,
+          "pack_size": 3,
+          "group_total_price": 210,
+          "effective_unit_price": 70,
+          "display_text": "3 ชิ้น = 1 แพ็ค ราคา 210 บาท"
+        },
+        {
+          "group_code": "CASE",
+          "group_name": "ลัง",
+          "unit": "ลัง",
+          "min_qty": 12,
+          "pack_size": 12,
+          "group_total_price": 800,
+          "effective_unit_price": 66.67,
+          "display_text": "12 ชิ้น = 1 ลัง ราคา 800 บาท"
+        }
+      ],
+      "selection_rule": {
+        "mode": "best_price_by_quantity",
+        "allow_manual_override": true
+      }
+    },
+    {
+      "product_id": "8859685401792",
+      "product_name": "หน้ากากคาร์บอน PM 2.5",
+      "base_unit": "ชิ้น",
+      "default_unit_price": 60,
+      "pricing_groups": [
+        {
+          "group_code": "RETAIL",
+          "group_name": "ปลีก",
+          "unit": "ชิ้น",
+          "min_qty": 1,
+          "pack_size": 1,
+          "group_total_price": 60,
+          "effective_unit_price": 60,
+          "display_text": "1 ชิ้น ราคา 60 บาท"
+        }
+      ],
+      "selection_rule": {
+        "mode": "best_price_by_quantity",
+        "allow_manual_override": false
+      }
+    }
+  ]
+}

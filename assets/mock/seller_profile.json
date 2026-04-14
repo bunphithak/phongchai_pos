@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "description": "Mock: ตอบแทน GET /api/v1/company/profile — ใช้หัวใบกำกับภาษี / ตั้งค่าร้าน",
+    "version": 1
+  },
+  "company_name_th": "ห้างหุ้นส่วนจำกัด พงษ์ชัย พอส",
+  "company_name_en": "Phongchai POS Partnership Limited",
+  "tax_id": "0-0000-00000-00-0",
+  "address_th": "เลขที่ — ถนน — ตำบล/แขวง — อำเภอ/เขต — จังหวัด — รหัสไปรษณีย์",
+  "tel": "โทร. 0-0000-0000",
+  "email": "tax@example.com"
+}

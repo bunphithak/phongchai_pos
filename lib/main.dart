@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phongchai_pos/core/theme/app_theme.dart';
+import 'package:phongchai_pos/data/mock/mock_data_store.dart';
 import 'package:phongchai_pos/features/auth/presentation/login_screen.dart';
 import 'package:phongchai_pos/features/auth/providers/auth_provider.dart';
 import 'package:phongchai_pos/features/pos/presentation/pos_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await MockDataStore.instance.loadAll();
   runApp(
     const ProviderScope(
       child: PhongchaiPosApp(),

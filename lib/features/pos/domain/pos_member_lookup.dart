@@ -1,26 +1,11 @@
-/// ผลค้นหาสมาชิกจากเบอร์ (จำลอง — ต่อ API ได้ภายหลัง)
-class MemberLookupHit {
-  const MemberLookupHit({
-    required this.name,
-    required this.loyaltyPoints,
-  });
+import 'package:phongchai_pos/data/mock/mock_data_store.dart';
+import 'package:phongchai_pos/data/models/member_lookup_hit.dart';
 
-  final String name;
-  final int loyaltyPoints;
-}
+export 'package:phongchai_pos/data/models/member_lookup_hit.dart';
 
-/// ค้นหาสมาชิกจากเบอร์โทร
+/// ค้นหาสมาชิกจากเบอร์ — ข้อมูลจาก `assets/mock/members_by_phone.json`
 MemberLookupHit? memberLookupByPhone(String raw) {
-  final digits = raw.replaceAll(RegExp(r'\D'), '');
-  if (digits.isEmpty) return null;
-  if (digits == '0812345678' || digits.endsWith('812345678')) {
-    return const MemberLookupHit(name: 'คุณสมชาย ใจดี', loyaltyPoints: 1280);
-  }
-  if (digits == '0899999999') {
-    return const MemberLookupHit(name: 'คุณสมหญิง รักสบาย', loyaltyPoints: 560);
-  }
-  return null;
+  return MockDataStore.instance.memberLookupByPhone(raw);
 }
 
-/// คืนเฉพาะชื่อ (ใช้ที่อื่นที่ต้องการแค่ชื่อ)
 String? memberNameForPhone(String raw) => memberLookupByPhone(raw)?.name;

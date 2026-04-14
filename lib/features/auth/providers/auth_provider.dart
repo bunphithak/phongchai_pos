@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:phongchai_pos/data/mock/mock_data_store.dart';
 import 'package:phongchai_pos/features/auth/domain/employee.dart';
 
 /// สถานะล็อกอิน: `null` = ยังไม่เข้าระบบ
@@ -24,12 +25,5 @@ class AuthNotifier extends Notifier<Employee?> {
 }
 
 Employee? _employeeForPin(String pin) {
-  switch (pin) {
-    case '123456':
-      return const Employee(name: 'สมชาย ใจดี', role: 'แคชเชียร์');
-    case '654321':
-      return const Employee(name: 'นารี รักงาน', role: 'หัวหน้าแผนก');
-    default:
-      return null;
-  }
+  return MockDataStore.instance.employeeForPin(pin);
 }

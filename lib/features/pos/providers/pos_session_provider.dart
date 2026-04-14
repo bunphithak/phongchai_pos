@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phongchai_pos/data/models/member.dart';
 import 'package:phongchai_pos/features/pos/domain/cart_item.dart';
 import 'package:phongchai_pos/features/pos/domain/pos_member_lookup.dart';
+import 'package:phongchai_pos/features/pos/domain/tax_invoice_buyer_info.dart';
 import 'package:phongchai_pos/features/pos/providers/cart_provider.dart';
 
 /// สมาชิกที่ผูกกับบิลปัจจุบัน (ค้นหา / สมัครใหม่ / พักบิล)
@@ -85,12 +86,16 @@ class HeldBillData {
     required this.discount,
     this.billMember,
     this.vatEnabled = false,
+    this.taxBuyer = const TaxInvoiceBuyerInfo(),
   });
 
   final List<CartItem> cartItems;
   final CartDiscountState discount;
   final Member? billMember;
   final bool vatEnabled;
+
+  /// ข้อมูลใบกำกับภาษีที่กรอกไว้กับบิลนี้
+  final TaxInvoiceBuyerInfo taxBuyer;
 }
 
 final heldBillProvider =

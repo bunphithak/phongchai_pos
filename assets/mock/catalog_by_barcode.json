@@ -1,0 +1,120 @@
+{
+  "meta": {
+    "description": "Mock: ตอบแทน GET /api/v1/catalog/items หรือ scan-by-barcode — แต่ละรายการคือสินค้าที่สแกนได้",
+    "version": 1
+  },
+  "items": [
+    {
+      "barcode": "123",
+      "product": {
+        "id": "123",
+        "name": "น้ำดื่ม",
+        "price": 12,
+        "unit": "ขวด",
+        "image_asset": "assets/images/product_water.jpg",
+        "image_url": null
+      }
+    },
+    {
+      "barcode": "456",
+      "product": {
+        "id": "456",
+        "name": "ข้าวสาร",
+        "price": 189,
+        "unit": "ถุง",
+        "image_asset": "assets/images/product_rice.jpg",
+        "image_url": null
+      }
+    },
+    {
+      "barcode": "8851473011619",
+      "product": {
+        "id": "8851473011619",
+        "name": "อ๊อพพลีน สเตอไรก์ อาย วอช",
+        "price": 89,
+        "unit": "ขวด",
+        "image_asset": null,
+        "image_url": null
+      }
+    },
+    {
+      "barcode": "8851552201030",
+      "product": {
+        "id": "8851552201030",
+        "name": "ปากกาเคมีสีแดง ตราม้า",
+        "price": 12,
+        "unit": "ด้าม",
+        "image_asset": null,
+        "image_url": null
+      }
+    },
+    {
+      "barcode": "8851907130077",
+      "product": {
+        "id": "8851907130077",
+        "name": "ปากกาควอนตั้ม",
+        "price": 30,
+        "unit": "ด้าม",
+        "image_asset": null,
+        "image_url": null
+      }
+    },
+    {
+      "barcode": "8859685401792",
+      "product": {
+        "id": "8859685401792",
+        "name": "หน้ากากคาร์บอน PM 2.5",
+        "price": 60,
+        "unit": "ชิ้น",
+        "image_asset": null,
+        "image_url": null
+      }
+    },
+    {
+      "barcode": "8850092094034",
+      "product": {
+        "id": "8850092094034",
+        "name": "น้ำยาเช็ดกระจก",
+        "price": 79,
+        "unit": "ชิ้น",
+        "pricing_policy": {
+          "strategy": "tiered_quantity",
+          "base_unit": "ชิ้น",
+          "tiers": [
+            {
+              "min_qty": 1,
+              "max_qty": 2,
+              "label": "ขายปลีก",
+              "unit": "ชิ้น",
+              "total_price": 79,
+              "effective_unit_price": 79
+            },
+            {
+              "min_qty": 3,
+              "max_qty": 11,
+              "label": "ขายแพ็ค",
+              "unit": "แพ็ค",
+              "pack_size": 3,
+              "total_price": 210,
+              "effective_unit_price": 70
+            },
+            {
+              "min_qty": 12,
+              "label": "ขายลัง",
+              "unit": "ลัง",
+              "pack_size": 12,
+              "total_price": 800,
+              "effective_unit_price": 66.67
+            }
+          ],
+          "rounding": {
+            "currency": "THB",
+            "decimals": 2
+          }
+        },
+        "image_asset": null,
+        "image_url": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcRIQTEyjWlXZFUqpveO62aQZ49bjmPL4rWsI6rsGKdpaWkbPYyPM-QkkBJt-z7PcSJkZhSaP4rdtVSE8xBc-LqN-0MNXuGz-4Oa9Im6WTB5WQh-CHc3cgQw"
+      }
+    }
+  ]
+}
