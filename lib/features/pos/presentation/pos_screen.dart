@@ -22,6 +22,7 @@ import 'package:phongchai_pos/features/pos/presentation/order_history_screen.dar
 import 'package:phongchai_pos/features/pos/presentation/product_search_dialog.dart';
 import 'package:phongchai_pos/features/pos/presentation/tax_invoice_form_dialog.dart';
 import 'package:phongchai_pos/core/config/app_config.dart';
+import 'package:phongchai_pos/core/widgets/sync_progress_dialog.dart';
 import 'package:phongchai_pos/core/loyalty/points_redeem.dart';
 import 'package:phongchai_pos/core/sync/invoice_number_generator.dart';
 import 'package:phongchai_pos/features/pos/providers/cart_provider.dart';
@@ -289,14 +290,50 @@ class _POSScreenState extends ConsumerState<POSScreen> {
 
   Future<void> _onSyncData() async {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('กำลังซิงค์ข้อมูล…')),
+    final progress = ValueNotifier<double>(0);
+    final navigator = Navigator.of(context, rootNavigator: true);
+
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        barrierColor: Colors.black.withValues(alpha: 0.45),
+        useRootNavigator: true,
+        builder: (dialogContext) {
+          return PopScope(
+            canPop: false,
+            child: SyncProgressDialog(progress: progress),
+          );
+        },
+      ),
     );
-    final sync = ref.read(posSyncServiceProvider);
-    await sync.pullProductsOnStartup(force: true);
-    final pushed = await sync.tryPushPendingOrders();
-    final purged =
-        await sync.purgeSyncedOlderThanDays(AppConfig.purgeSyncedDaysAfter);
+    await Future<void>.delayed(Duration.zero);
+
+    var pushed = 0;
+    var purged = 0;
+    try {
+      final sync = ref.read(posSyncServiceProvider);
+      progress.value = 0.05;
+      await Future<void>.delayed(Duration.zero);
+      progress.value = 0.12;
+      await sync.pullProductsOnStartup(force: true);
+      progress.value = 0.45;
+      pushed = await sync.tryPushPendingOrders();
+      progress.value = 0.78;
+      purged = await sync.purgeSyncedOlderThanDays(
+        AppConfig.purgeSyncedDaysAfter,
+      );
+      progress.value = 1.0;
+      await Future<void>.delayed(const Duration(milliseconds: 220));
+    } finally {
+      if (mounted) {
+        navigator.pop();
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        progress.dispose();
+      });
+    }
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
