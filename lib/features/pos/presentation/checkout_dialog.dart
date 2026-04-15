@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import 'package:phongchai_pos/features/pos/presentation/promptpay_qr_dialog.dart';
 
 enum PosPaymentMethod { cash, transfer }
 
@@ -20,18 +24,26 @@ class PosCheckoutResult {
 Future<PosCheckoutResult?> showPosCheckoutDialog(
   BuildContext context, {
   required double grandTotal,
+  required String promptPayId,
 }) {
   return showDialog<PosCheckoutResult>(
     context: context,
     barrierDismissible: false,
-    builder: (context) => _CheckoutDialogBody(grandTotal: grandTotal),
+    builder: (context) => _CheckoutDialogBody(
+      grandTotal: grandTotal,
+      promptPayId: promptPayId,
+    ),
   );
 }
 
 class _CheckoutDialogBody extends StatefulWidget {
-  const _CheckoutDialogBody({required this.grandTotal});
+  const _CheckoutDialogBody({
+    required this.grandTotal,
+    required this.promptPayId,
+  });
 
   final double grandTotal;
+  final String promptPayId;
 
   @override
   State<_CheckoutDialogBody> createState() => _CheckoutDialogBodyState();
@@ -74,9 +86,16 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
     return r >= widget.grandTotal;
   }
 
-  void _confirm() {
-    if (!_canConfirm) return;
-    if (_method == PosPaymentMethod.transfer) {
+  /// เปิด QR พร้อมเพย์ — ถ้าโอนแล้วกดยืนยันแล้ว ปิด dialog ชำระเงินพร้อมผลลัพธ์
+  Future<void> _openPromptPayAndMaybeComplete() async {
+    if (!_canConfirm || _method != PosPaymentMethod.transfer) return;
+    final confirmed = await showPromptPayQrDialog(
+      context,
+      amount: widget.grandTotal,
+      promptPayId: widget.promptPayId,
+    );
+    if (!mounted) return;
+    if (confirmed == true) {
       Navigator.of(context).pop(
         PosCheckoutResult(
           method: PosPaymentMethod.transfer,
@@ -84,6 +103,13 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
           printReceipt: _printReceipt,
         ),
       );
+    }
+  }
+
+  Future<void> _confirm() async {
+    if (!_canConfirm) return;
+    if (_method == PosPaymentMethod.transfer) {
+      await _openPromptPayAndMaybeComplete();
       return;
     }
     final r = _parsedCash!;
@@ -148,9 +174,25 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
                 ],
                 selected: {_method},
                 onSelectionChanged: (s) {
-                  setState(() => _method = s.first);
+                  final next = s.first;
+                  setState(() => _method = next);
+                  if (next == PosPaymentMethod.transfer) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) unawaited(_openPromptPayAndMaybeComplete());
+                    });
+                  }
                 },
               ),
+              if (_method == PosPaymentMethod.transfer) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'เปิด QR พร้อมเพย์ทันที — ถ้าปิดไปก่อน กด «ยืนยันชำระ» อีกครั้งเพื่อสแกนใหม่',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.35,
+                  ),
+                ),
+              ],
               if (_method == PosPaymentMethod.cash) ...[
                 const SizedBox(height: 20),
                 TextField(
@@ -233,7 +275,7 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
           child: const Text('ยกเลิก'),
         ),
         FilledButton(
-          onPressed: _canConfirm ? _confirm : null,
+          onPressed: _canConfirm ? () => _confirm() : null,
           child: const Text('ยืนยันชำระ'),
         ),
       ],

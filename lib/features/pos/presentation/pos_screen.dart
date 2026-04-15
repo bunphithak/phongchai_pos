@@ -484,7 +484,11 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       return;
     }
 
-    final result = await showPosCheckoutDialog(context, grandTotal: total);
+    final result = await showPosCheckoutDialog(
+      context,
+      grandTotal: total,
+      promptPayId: MockDataStore.instance.sellerProfile.promptpayId,
+    );
     if (!mounted || result == null) {
       _refocusBarcode();
       return;

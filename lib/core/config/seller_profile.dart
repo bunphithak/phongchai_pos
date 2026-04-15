@@ -7,6 +7,7 @@ class SellerProfile {
     required this.addressTh,
     required this.tel,
     required this.email,
+    this.promptpayId = '',
   });
 
   final String companyNameTh;
@@ -16,6 +17,9 @@ class SellerProfile {
   final String tel;
   final String email;
 
+  /// เลขพร้อมเพย์ (เบอร์โทร / เลขบัตรประชาชน / เลขนิติ) — ใช้สร้าง QR รับเงิน
+  final String promptpayId;
+
   static const SellerProfile defaults = SellerProfile(
     companyNameTh: 'ห้างหุ้นส่วนจำกัด พงษ์ชัย พอส',
     companyNameEn: 'Phongchai POS Partnership Limited',
@@ -24,6 +28,7 @@ class SellerProfile {
         'เลขที่ — ถนน — ตำบล/แขวง — อำเภอ/เขต — จังหวัด — รหัสไปรษณีย์',
     tel: 'โทร. 0-0000-0000',
     email: 'tax@example.com',
+    promptpayId: '',
   );
 
   factory SellerProfile.fromJson(Map<String, dynamic> json) {
@@ -34,6 +39,7 @@ class SellerProfile {
       addressTh: json['address_th'] as String,
       tel: json['tel'] as String,
       email: json['email'] as String,
+      promptpayId: json['promptpay_id'] as String? ?? '',
     );
   }
 }
