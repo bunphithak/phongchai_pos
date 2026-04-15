@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:phongchai_pos/features/pos/domain/pos_member_lookup.dart';
 import 'package:phongchai_pos/features/pos/domain/tax_invoice_buyer_info.dart';
+import 'package:phongchai_pos/features/pos/providers/pos_session_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/tax_invoice_buyer_provider.dart';
 
 /// โหมดฟอร์ม — [ephemeralOnly] ไม่บันทึกลง provider (ใช้เฉพาะสร้าง PDF / PDPA)
@@ -63,6 +65,7 @@ class TaxInvoiceFormDialog extends ConsumerStatefulWidget {
 
 class _TaxInvoiceFormDialogState extends ConsumerState<TaxInvoiceFormDialog> {
   late final TextEditingController _taxIdController;
+  late final TextEditingController _phoneController;
   late final TextEditingController _companyController;
   late final TextEditingController _addressController;
   late final TextEditingController _branchCodeController;
@@ -80,6 +83,7 @@ class _TaxInvoiceFormDialogState extends ConsumerState<TaxInvoiceFormDialog> {
       initial = widget.ref!.read(taxInvoiceBuyerProvider);
     }
     _taxIdController = TextEditingController(text: initial.taxId);
+    _phoneController = TextEditingController(text: initial.phone);
     _companyController = TextEditingController(text: initial.companyOrName);
     _addressController = TextEditingController(text: initial.address);
     _branchCodeController = TextEditingController(text: initial.branchCode);
@@ -89,10 +93,19 @@ class _TaxInvoiceFormDialogState extends ConsumerState<TaxInvoiceFormDialog> {
   @override
   void dispose() {
     _taxIdController.dispose();
+    _phoneController.dispose();
     _companyController.dispose();
     _addressController.dispose();
     _branchCodeController.dispose();
     super.dispose();
+  }
+
+  void _onPhoneChanged(String raw) {
+    final hit = memberLookupByPhone(raw);
+    if (hit == null) return;
+    if (_companyController.text.trim().isEmpty) {
+      _companyController.text = hit.name;
+    }
   }
 
   void _onClear() {
@@ -132,6 +145,7 @@ class _TaxInvoiceFormDialogState extends ConsumerState<TaxInvoiceFormDialog> {
     }
     final info = TaxInvoiceBuyerInfo(
       taxId: _taxIdController.text.trim(),
+      phone: _phoneController.text.trim(),
       companyOrName: _companyController.text.trim(),
       address: _addressController.text.trim(),
       isHeadOffice: _isHeadOffice,
@@ -142,6 +156,10 @@ class _TaxInvoiceFormDialogState extends ConsumerState<TaxInvoiceFormDialog> {
       return;
     }
     widget.ref!.read(taxInvoiceBuyerProvider.notifier).setFromForm(info);
+    final phone = info.phone.trim();
+    if (phone.isNotEmpty) {
+      widget.ref!.read(posMemberProvider.notifier).searchByPhone(phone);
+    }
     Navigator.of(context).pop();
   }
 
@@ -182,6 +200,22 @@ class _TaxInvoiceFormDialogState extends ConsumerState<TaxInvoiceFormDialog> {
                   FilteringTextInputFormatter.digitsOnly,
                   LengthLimitingTextInputFormatter(13),
                 ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _phoneController,
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'เบอร์โทรศัพท์',
+                  hintText: 'กรอกเบอร์เพื่อค้นหาสมาชิกอัตโนมัติ',
+                  border: OutlineInputBorder(),
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(10),
+                ],
+                onChanged: _onPhoneChanged,
               ),
               const SizedBox(height: 12),
               TextField(

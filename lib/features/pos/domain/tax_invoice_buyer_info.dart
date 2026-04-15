@@ -2,6 +2,7 @@
 class TaxInvoiceBuyerInfo {
   const TaxInvoiceBuyerInfo({
     this.taxId = '',
+    this.phone = '',
     this.companyOrName = '',
     this.address = '',
     this.isHeadOffice = true,
@@ -14,6 +15,9 @@ class TaxInvoiceBuyerInfo {
   /// ชื่อบริษัทหรือชื่อลูกค้า
   final String companyOrName;
 
+  /// เบอร์โทรผู้ซื้อ (ใช้ค้นหาสมาชิกและแสดงในเอกสาร)
+  final String phone;
+
   /// ที่อยู่ (หลายบรรทัดได้)
   final String address;
 
@@ -25,6 +29,7 @@ class TaxInvoiceBuyerInfo {
 
   bool get hasAnyInput =>
       taxId.trim().isNotEmpty ||
+      phone.trim().isNotEmpty ||
       companyOrName.trim().isNotEmpty ||
       address.trim().isNotEmpty ||
       !isHeadOffice;
@@ -38,6 +43,7 @@ class TaxInvoiceBuyerInfo {
 
   TaxInvoiceBuyerInfo copyWith({
     String? taxId,
+    String? phone,
     String? companyOrName,
     String? address,
     bool? isHeadOffice,
@@ -45,6 +51,7 @@ class TaxInvoiceBuyerInfo {
   }) {
     return TaxInvoiceBuyerInfo(
       taxId: taxId ?? this.taxId,
+      phone: phone ?? this.phone,
       companyOrName: companyOrName ?? this.companyOrName,
       address: address ?? this.address,
       isHeadOffice: isHeadOffice ?? this.isHeadOffice,

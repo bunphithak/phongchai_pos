@@ -350,9 +350,12 @@ pw.Widget _taxInvoiceBuyerBlock(
         style: t(size: 9.5),
       ),
     );
-    if (data.customerPhone != null && data.customerPhone!.trim().isNotEmpty) {
+    final phone = b.phone.trim().isNotEmpty
+        ? b.phone.trim()
+        : (data.customerPhone?.trim() ?? '');
+    if (phone.isNotEmpty) {
       children.add(pw.SizedBox(height: 2));
-      children.add(pw.Text('โทร: ${data.customerPhone}', style: t(size: 9.5)));
+      children.add(pw.Text('โทร: $phone', style: t(size: 9.5)));
     }
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,

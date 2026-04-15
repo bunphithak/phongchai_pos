@@ -2,17 +2,21 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:phongchai_pos/data/mock/mock_data_store.dart';
 import 'package:phongchai_pos/core/utils/pdf_generator.dart';
 import 'package:phongchai_pos/core/utils/tax_invoice_print.dart';
+import 'package:phongchai_pos/core/utils/thermal_receipt_pdf.dart';
 import 'package:phongchai_pos/core/utils/thai_date_time.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:printing/printing.dart';
 import 'package:phongchai_pos/data/models/product.dart';
 import 'package:phongchai_pos/features/pos/domain/barcode_catalog.dart';
+import 'package:phongchai_pos/features/pos/domain/tax_invoice_buyer_info.dart';
 import 'package:phongchai_pos/features/auth/presentation/login_screen.dart';
 import 'package:phongchai_pos/features/auth/providers/auth_provider.dart';
 import 'package:phongchai_pos/features/pos/domain/cart_item.dart';
 import 'package:phongchai_pos/features/pos/presentation/checkout_dialog.dart';
-import 'package:phongchai_pos/features/pos/presentation/member_register_dialog.dart';
 import 'package:phongchai_pos/features/pos/domain/sale_record.dart';
 import 'package:phongchai_pos/features/pos/presentation/order_history_screen.dart';
 import 'package:phongchai_pos/features/pos/presentation/tax_invoice_form_dialog.dart';
@@ -28,6 +32,7 @@ const _kHeaderNavy = Color(0xFF1E293B);
 const _kAppBarDark = Color(0xFF121212);
 const _kScaffoldBg = Color(0xFFF1F5F9);
 const _kSummaryBorder = Color(0xFFE2E8F0);
+final NumberFormat _kMoneyFmt = NumberFormat('#,##0.00', 'en_US');
 
 /// ยอดรวมสุทธิ — สีน้ำเงินเข้มให้เด่น
 const _kNetTotalColor = Color(0xFF0D47A1);
@@ -78,8 +83,12 @@ Widget _posNavIconButton({
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(icon, color: Colors.white.withValues(alpha: 0.95), size: 24),
-        SizedBox(height: 10,),
-        Text(tooltip, style: TextStyle(color: Colors.white, fontSize: 10),textAlign: TextAlign.center,),
+        SizedBox(height: 10),
+        Text(
+          tooltip,
+          style: TextStyle(color: Colors.white, fontSize: 10),
+          textAlign: TextAlign.center,
+        ),
       ],
     ),
   );
@@ -104,9 +113,15 @@ Widget _posNavIconButton({
 
 /// หัวแถบ POS: วันที่ + ไอคอนร้าน / ประวัติ (ไม่มีช่องค้นหาในแถบ)
 class _PosAppBarHeader extends StatefulWidget {
-  const _PosAppBarHeader({required this.onOpenHistory});
+  const _PosAppBarHeader({
+    required this.onOpenMemberPicker,
+    required this.onOpenHistory,
+    required this.onOpenTaxInvoiceForm,
+  });
 
+  final VoidCallback onOpenMemberPicker;
   final VoidCallback onOpenHistory;
+  final VoidCallback onOpenTaxInvoiceForm;
 
   @override
   State<_PosAppBarHeader> createState() => _PosAppBarHeaderState();
@@ -181,11 +196,23 @@ class _PosAppBarHeaderState extends State<_PosAppBarHeader> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  _posNavIconButton(
+                    icon: Icons.people_alt_outlined,
+                    tooltip: 'สมาชิก(F1)',
+                    onPressed: widget.onOpenMemberPicker,
+                  ),
+                  const SizedBox(width: 8),
                   const SizedBox(width: 10),
                   _posNavIconButton(
                     icon: Icons.receipt_long_outlined,
                     tooltip: 'ประวัติการขาย',
                     onPressed: widget.onOpenHistory,
+                  ),
+                  const SizedBox(width: 8),
+                  _posNavIconButton(
+                    icon: Icons.edit_document,
+                    tooltip: 'ใบกำกับภาษี',
+                    onPressed: widget.onOpenTaxInvoiceForm,
                   ),
                 ],
               ),
@@ -206,6 +233,7 @@ class POSScreen extends ConsumerStatefulWidget {
 
 class _POSScreenState extends ConsumerState<POSScreen> {
   final _barcodeController = TextEditingController();
+  final _scanQtyController = TextEditingController(text: '1');
   final _barcodeFocus = FocusNode();
   final _discountController = TextEditingController();
   final _memberPhoneController = TextEditingController();
@@ -218,6 +246,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
   @override
   void dispose() {
     _barcodeController.dispose();
+    _scanQtyController.dispose();
     _barcodeFocus.dispose();
     _discountController.dispose();
     _memberPhoneController.dispose();
@@ -232,7 +261,35 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     });
   }
 
+  int _readScanQuantity() {
+    final parsed = int.tryParse(_scanQtyController.text.trim()) ?? 1;
+    if (parsed <= 0) return 1;
+    if (parsed > 999) return 999;
+    return parsed;
+  }
+
+  void _onScanQtySubmitted(String value) {
+    final raw = value.trim();
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.length >= 8) {
+      // กันกรณีปืนยิงสแกนหลุดมาที่ช่องจำนวน: ย้ายเป็นบาร์โค้ดให้อัตโนมัติ
+      _scanQtyController.text = '1';
+      _barcodeController.text = digits;
+      unawaited(_onBarcodeSubmitted(digits));
+      return;
+    }
+    if (digits.isEmpty || digits == '0') {
+      _scanQtyController.text = '1';
+    } else if (digits.length > 3) {
+      _scanQtyController.text = '999';
+    } else if (digits != raw) {
+      _scanQtyController.text = digits;
+    }
+    _refocusBarcode();
+  }
+
   Future<void> _onBarcodeSubmitted(String value) async {
+    final qty = _readScanQuantity();
     final code = value.trim();
     if (code.isEmpty) {
       _refocusBarcode();
@@ -250,8 +307,12 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       return;
     }
 
-    ref.read(cartProvider.notifier).addOrIncrementProduct(product);
+    final cart = ref.read(cartProvider.notifier);
+    for (var i = 0; i < qty; i++) {
+      cart.addOrIncrementProduct(product);
+    }
     _barcodeController.clear();
+    _scanQtyController.text = '1';
     _refocusBarcode();
   }
 
@@ -481,87 +542,100 @@ class _POSScreenState extends ConsumerState<POSScreen> {
           ),
         );
 
+    if (taxBuyer.hasAnyInput) {
+      // มีข้อมูลกำกับภาษี: เปิดหน้า PDF A4 ก่อน
+      await _printTaxInvoice(invoiceData);
+      if (!mounted) return;
+      await _showCheckoutSuccessModal(result: result);
+      if (!mounted) return;
+      _refocusBarcode();
+      return;
+    }
+
+    // ไม่มีข้อมูลกำกับภาษี: ชั่วคราวเปิดเป็น PDF ก่อน (รอเครื่องพิมพ์จริง)
+    await _openThermalReceiptPdfPreview(invoiceData);
+    if (!mounted) return;
+    await _showCheckoutSuccessModal(result: result);
+    if (!mounted) return;
+    _refocusBarcode();
+  }
+
+  void _finalizeCheckoutAndClearCurrentSale() {
     ref.read(cartProvider.notifier).clear();
     _resetDiscountField();
     _resetMemberField();
     ref.read(taxInvoiceBuyerProvider.notifier).clear();
-
-    await _showPostCheckoutSuccess(result: result, invoiceData: invoiceData);
   }
 
   Future<void> _printTaxInvoice(TaxInvoiceData data) async {
     await printTaxInvoiceWithFallback(context: context, data: data);
   }
 
-  Future<void> _showPostCheckoutSuccess({
+  Future<void> _showCheckoutSuccessModal({
     required PosCheckoutResult result,
-    required TaxInvoiceData invoiceData,
   }) async {
     if (!mounted) return;
-    await showDialog<void>(
+    final shouldClear = await showDialog<bool>(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: false,
       builder: (ctx) {
-        final theme = Theme.of(ctx);
-        final colorScheme = theme.colorScheme;
         final methodLabel = result.method == PosPaymentMethod.cash
             ? 'เงินสด'
             : 'โอนเงิน';
         return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          icon: Icon(
-            Icons.check_circle_rounded,
-            color: colorScheme.primary,
-            size: 48,
-          ),
           title: const Text('ชำระเงินสำเร็จ'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('วิธีชำระ: $methodLabel', style: theme.textTheme.bodyLarge),
+              Text('วิธีชำระ: $methodLabel'),
               if (result.method == PosPaymentMethod.cash) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'เงินทอน ฿${result.change.toStringAsFixed(2)}',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-              if (result.printReceipt) ...[
-                const SizedBox(height: 10),
-                Text(
-                  'ตัวเลือก “พิมพ์ใบเสร็จ” ในหน้าชำระเงินถูกเปิดไว้ (สำหรับเครื่องพิมพ์ใบเสร็จความร้อน)',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
+                const SizedBox(height: 6),
+                Text('เงินทอน: ฿${_kMoneyFmt.format(result.change)}'),
               ],
             ],
           ),
-          actionsAlignment: MainAxisAlignment.end,
           actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('ปิด'),
-            ),
-            FilledButton.icon(
-              icon: const Icon(Icons.picture_as_pdf_outlined),
-              label: const Text('ดู PDF แล้วพิมพ์'),
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                unawaited(_printTaxInvoice(invoiceData));
-              },
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('ตกลง'),
             ),
           ],
         );
       },
     );
-    if (mounted) {
-      _refocusBarcode();
+
+    if (shouldClear == true) {
+      _finalizeCheckoutAndClearCurrentSale();
+    }
+  }
+
+  Future<void> _openThermalReceiptPdfPreview(TaxInvoiceData data) async {
+    try {
+      final bytes = await buildThermalReceiptPdfBytes(data);
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (ctx) => Scaffold(
+            appBar: AppBar(title: const Text('ตัวอย่างใบเสร็จ (ชั่วคราว)')),
+            body: PdfPreview(
+              maxPageWidth: 420,
+              canChangePageFormat: false,
+              canChangeOrientation: false,
+              canDebug: false,
+              allowPrinting: false,
+              allowSharing: true,
+              build: (_) async => bytes,
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('เปิดตัวอย่างใบเสร็จไม่สำเร็จ: $e')),
+        );
+      }
     }
   }
 
@@ -692,16 +766,104 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     _refocusBarcode();
   }
 
-  void _onRegisterMember() {
-    showMemberRegisterDialog(
-      context,
-      ref,
-      onSavedSyncPhoneField: (phone) {
-        _memberPhoneController.text = phone;
+  Future<void> _openMemberPickerModal() async {
+    final all = MockDataStore.instance.memberDirectory;
+    if (all.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('ยังไม่มีข้อมูลสมาชิก')));
+      }
+      _refocusBarcode();
+      return;
+    }
+
+    final queryController = TextEditingController();
+    final selected = await showDialog<MockMemberCandidate>(
+      context: context,
+      builder: (ctx) {
+        var filtered = all;
+        return StatefulBuilder(
+          builder: (ctx, setLocalState) {
+            return AlertDialog(
+              title: const Text('ค้นหาสมาชิก'),
+              content: SizedBox(
+                width: 520,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: queryController,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        hintText: 'ค้นหาจากชื่อหรือเบอร์โทร',
+                        prefixIcon: Icon(Icons.search),
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (v) {
+                        final q = v.trim().toLowerCase();
+                        setLocalState(() {
+                          if (q.isEmpty) {
+                            filtered = all;
+                          } else {
+                            filtered = all.where((e) {
+                              return e.phone.contains(q) ||
+                                  e.name.toLowerCase().contains(q);
+                            }).toList();
+                          }
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: filtered.isEmpty
+                          ? const Center(child: Text('ไม่พบสมาชิก'))
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: filtered.length,
+                              separatorBuilder: (context, index) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (ctx, i) {
+                                final m = filtered[i];
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(m.name),
+                                  subtitle: Text(
+                                    '${m.phone} • แต้ม ${_formatLoyaltyPoints(m.loyaltyPoints)}',
+                                  ),
+                                  onTap: () => Navigator.of(ctx).pop(m),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('ปิด'),
+                ),
+              ],
+            );
+          },
+        );
       },
-    ).whenComplete(() {
-      if (mounted) _refocusBarcode();
-    });
+    );
+    queryController.dispose();
+    if (!mounted) return;
+    if (selected != null) {
+      _memberPhoneController.text = selected.phone;
+      _onMemberSearch();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('เลือกสมาชิกแล้ว: ${selected.name}'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    _refocusBarcode();
   }
 
   Future<void> _showEditQuantityDialog(int index, CartItem item) async {
@@ -783,6 +945,9 @@ class _POSScreenState extends ConsumerState<POSScreen> {
         const SingleActivator(LogicalKeyboardKey.f5): () {
           if (mounted) unawaited(_onRequestClearCart());
         },
+        const SingleActivator(LogicalKeyboardKey.f1): () {
+          if (mounted) unawaited(_openMemberPickerModal());
+        },
         const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
@@ -807,6 +972,8 @@ class _POSScreenState extends ConsumerState<POSScreen> {
           title: Padding(
             padding: const EdgeInsets.only(left: 4),
             child: _PosAppBarHeader(
+              onOpenMemberPicker: () => unawaited(_openMemberPickerModal()),
+              onOpenTaxInvoiceForm: _openTaxInvoiceForm,
               onOpenHistory: () {
                 Navigator.of(context).push<void>(
                   MaterialPageRoute<void>(
@@ -873,16 +1040,15 @@ class _POSScreenState extends ConsumerState<POSScreen> {
                   Expanded(
                     flex: 33,
                     child: _SummaryPanel(
-                      memberPhoneController: _memberPhoneController,
-                      onMemberSearch: _onMemberSearch,
-                      onRegisterMember: _onRegisterMember,
                       onRefocusBarcode: _refocusBarcode,
+                      onScanQtySubmitted: _onScanQtySubmitted,
+                    onOpenTaxInvoiceForm: _openTaxInvoiceForm,
+                      scanQtyController: _scanQtyController,
                       barcodeController: _barcodeController,
                       barcodeFocus: _barcodeFocus,
                       discountController: _discountController,
                       onBarcodeSubmitted: _onBarcodeSubmitted,
                       onCheckout: _onCheckout,
-                      onOpenTaxInvoiceForm: _openTaxInvoiceForm,
                       onDiscountRawChanged: (v) {
                         ref.read(cartDiscountProvider.notifier).setRawValue(v);
                       },
@@ -911,16 +1077,15 @@ class _POSScreenState extends ConsumerState<POSScreen> {
                     elevation: 6,
                     shadowColor: Colors.black26,
                     child: _SummaryPanel(
-                      memberPhoneController: _memberPhoneController,
-                      onMemberSearch: _onMemberSearch,
-                      onRegisterMember: _onRegisterMember,
                       onRefocusBarcode: _refocusBarcode,
+                      onScanQtySubmitted: _onScanQtySubmitted,
+                      onOpenTaxInvoiceForm: _openTaxInvoiceForm,
+                      scanQtyController: _scanQtyController,
                       barcodeController: _barcodeController,
                       barcodeFocus: _barcodeFocus,
                       discountController: _discountController,
                       onBarcodeSubmitted: _onBarcodeSubmitted,
                       onCheckout: _onCheckout,
-                      onOpenTaxInvoiceForm: _openTaxInvoiceForm,
                       onDiscountRawChanged: (v) {
                         ref.read(cartDiscountProvider.notifier).setRawValue(v);
                       },
@@ -974,7 +1139,8 @@ class _CartPanel extends ConsumerWidget {
       }
 
       // ถ้าแตกได้แค่ 1 แถวและยังเป็นหน่วยฐานเดิม ให้แสดงแบบรายการปกติ
-      if (breakdown.length == 1 && breakdown.first.unit == item.product.unitLabel) {
+      if (breakdown.length == 1 &&
+          breakdown.first.unit == item.product.unitLabel) {
         cartRows.add(
           _CartDisplayRow(
             sourceIndex: i,
@@ -1248,7 +1414,8 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
   late final TextEditingController _qtyController;
   late final FocusNode _qtyFocus;
 
-  int get _displayedUnitQty => widget.displayPart?.unitCount ?? widget.item.quantity;
+  int get _displayedUnitQty =>
+      widget.displayPart?.unitCount ?? widget.item.quantity;
 
   int get _stepQty {
     final part = widget.displayPart;
@@ -1334,7 +1501,8 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
     super.didUpdateWidget(oldWidget);
     final qtyChanged = oldWidget.item.quantity != widget.item.quantity;
     final productChanged = oldWidget.item.product.id != widget.item.product.id;
-    final partChanged = oldWidget.displayPart?.unitCount != widget.displayPart?.unitCount ||
+    final partChanged =
+        oldWidget.displayPart?.unitCount != widget.displayPart?.unitCount ||
         oldWidget.displayPart?.unit != widget.displayPart?.unit ||
         oldWidget.displayPart?.baseQty != widget.displayPart?.baseQty;
     if ((qtyChanged || productChanged) && !_qtyFocus.hasFocus) {
@@ -1353,9 +1521,15 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
     final breakdown = product.breakdownForQuantity(widget.item.quantity);
     final displayPart = widget.displayPart;
     final rowSubtotal = displayPart?.totalPrice ?? widget.item.lineTotal;
+    final piecesPerUnit = displayPart != null && displayPart.unitCount > 0
+        ? (displayPart.baseQty / displayPart.unitCount).round()
+        : 1;
+    final partUnitSuffix = displayPart != null && piecesPerUnit > 1
+        ? ' ($piecesPerUnit ชิ้น)'
+        : '';
     final rowUnitText = displayPart != null
-        ? '฿${displayPart.unitPrice.toStringAsFixed(2)} / ${displayPart.unit}'
-        : '฿${product.displayPriceForShownUnit(widget.item.quantity).toStringAsFixed(2)} / ${product.displayUnitForQuantity(widget.item.quantity)}';
+        ? '฿${_kMoneyFmt.format(displayPart.unitPrice)} / ${displayPart.unit}$partUnitSuffix'
+        : '฿${_kMoneyFmt.format(product.displayPriceForShownUnit(widget.item.quantity))} / ${product.displayUnitForQuantity(widget.item.quantity)}';
     const thumbSize = 44.0;
 
     return Material(
@@ -1396,7 +1570,7 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
                 children: [
                   for (final part in breakdown)
                     Text(
-                      '${part.unitCount} ${part.unit} = ฿${part.totalPrice.toStringAsFixed(2)}',
+                      '${part.unitCount} ${part.unit} = ฿${_kMoneyFmt.format(part.totalPrice)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelSmall?.copyWith(
@@ -1407,107 +1581,123 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
               ),
         trailing: widget.allowEdit
             ? ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 200),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.remove_rounded, size: 18),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                tooltip: 'ลดจำนวน',
-                onPressed: () {
-                  final notifier = ref.read(cartProvider.notifier);
-                  if (widget.displayPart == null) {
-                    notifier.decrementAt(index);
-                    return;
-                  }
-                  final next = widget.item.quantity - _stepQty;
-                  if (next <= 0) {
-                    notifier.removeAt(index);
-                  } else {
-                    notifier.setQuantityAt(index, next);
-                  }
-                },
-              ),
-              SizedBox(
-                width: 36,
-                child: TextField(
-                  controller: _qtyController,
-                  focusNode: _qtyFocus,
-                  textAlign: TextAlign.center,
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.done,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: InputDecoration(
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      vertical: 4,
-                      horizontal: 2,
+                constraints: const BoxConstraints(maxWidth: 260),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove_rounded, size: 18),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 28,
+                        minHeight: 28,
+                      ),
+                      tooltip: 'ลดจำนวน',
+                      onPressed: () {
+                        final notifier = ref.read(cartProvider.notifier);
+                        if (widget.displayPart == null) {
+                          notifier.decrementAt(index);
+                          return;
+                        }
+                        final next = widget.item.quantity - _stepQty;
+                        if (next <= 0) {
+                          notifier.removeAt(index);
+                        } else {
+                          notifier.setQuantityAt(index, next);
+                        }
+                      },
                     ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(6),
+                    SizedBox(
+                      width: 36,
+                      child: TextField(
+                        controller: _qtyController,
+                        focusNode: _qtyFocus,
+                        textAlign: TextAlign.center,
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.done,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 4,
+                            horizontal: 2,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                        ),
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                        onSubmitted: (_) => _commitQuantity(),
+                      ),
                     ),
-                    filled: true,
-                    fillColor: Colors.white,
-                  ),
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                  onSubmitted: (_) => _commitQuantity(),
+                    IconButton(
+                      icon: const Icon(Icons.add_rounded, size: 18),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 28,
+                        minHeight: 28,
+                      ),
+                      tooltip: 'เพิ่มจำนวน',
+                      onPressed: () {
+                        final notifier = ref.read(cartProvider.notifier);
+                        if (widget.displayPart == null) {
+                          notifier.incrementAt(index);
+                          return;
+                        }
+                        notifier.setQuantityAt(
+                          index,
+                          widget.item.quantity + _stepQty,
+                        );
+                      },
+                    ),
+                    SizedBox(
+                      width: 90,
+                      child: Text(
+                        '฿${_kMoneyFmt.format(rowSubtotal)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.visible,
+                        softWrap: false,
+                        textAlign: TextAlign.end,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.primary,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: colorScheme.error,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 26,
+                        minHeight: 26,
+                      ),
+                      tooltip: 'ลบรายการนี้',
+                      onPressed: () {
+                        ref.read(cartProvider.notifier).removeAt(index);
+                      },
+                    ),
+                  ],
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.add_rounded, size: 18),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                tooltip: 'เพิ่มจำนวน',
-                onPressed: () {
-                  final notifier = ref.read(cartProvider.notifier);
-                  if (widget.displayPart == null) {
-                    notifier.incrementAt(index);
-                    return;
-                  }
-                  notifier.setQuantityAt(index, widget.item.quantity + _stepQty);
-                },
-              ),
-              SizedBox(
-                width: 56,
-                child: Text(
-                  '฿${rowSubtotal.toStringAsFixed(2)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.end,
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: colorScheme.primary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ),
-              IconButton(
-                icon: Icon(
-                  Icons.close_rounded,
-                  size: 18,
-                  color: colorScheme.error,
-                ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                tooltip: 'ลบรายการนี้',
-                onPressed: () {
-                  ref.read(cartProvider.notifier).removeAt(index);
-                },
-              ),
-            ],
-          ),
-        )
+              )
             : SizedBox(
-                width: 128,
+                width: 140,
                 child: Text(
-                  '฿${rowSubtotal.toStringAsFixed(2)}',
+                  '฿${_kMoneyFmt.format(rowSubtotal)} ',
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  overflow: TextOverflow.visible,
+                  softWrap: false,
                   textAlign: TextAlign.end,
                   style: theme.textTheme.labelLarge?.copyWith(
                     fontWeight: FontWeight.w800,
@@ -1589,30 +1779,28 @@ class _ProductThumbnail extends StatelessWidget {
 
 class _SummaryPanel extends ConsumerWidget {
   const _SummaryPanel({
-    required this.memberPhoneController,
-    required this.onMemberSearch,
-    required this.onRegisterMember,
     required this.onRefocusBarcode,
+    required this.onScanQtySubmitted,
+    required this.onOpenTaxInvoiceForm,
+    required this.scanQtyController,
     required this.barcodeController,
     required this.barcodeFocus,
     required this.discountController,
     required this.onBarcodeSubmitted,
     required this.onCheckout,
-    required this.onOpenTaxInvoiceForm,
     required this.onDiscountRawChanged,
     this.scrollable = false,
   });
 
-  final TextEditingController memberPhoneController;
-  final VoidCallback onMemberSearch;
-  final VoidCallback onRegisterMember;
   final VoidCallback onRefocusBarcode;
+  final void Function(String) onScanQtySubmitted;
+  final VoidCallback onOpenTaxInvoiceForm;
+  final TextEditingController scanQtyController;
   final TextEditingController barcodeController;
   final FocusNode barcodeFocus;
   final TextEditingController discountController;
   final void Function(String) onBarcodeSubmitted;
   final VoidCallback onCheckout;
-  final VoidCallback onOpenTaxInvoiceForm;
   final void Function(double) onDiscountRawChanged;
   final bool scrollable;
 
@@ -1626,50 +1814,19 @@ class _SummaryPanel extends ConsumerWidget {
     final grand = ref.watch(cartGrandTotalProvider);
     final vatEnabled = ref.watch(cartVatEnabledProvider);
     final member = ref.watch(posMemberProvider);
-    final discountState = ref.watch(cartDiscountProvider);
     final taxBuyer = ref.watch(taxInvoiceBuyerProvider);
+    final discountState = ref.watch(cartDiscountProvider);
     final bottomInset = MediaQuery.paddingOf(context).bottom;
 
     final children = <Widget>[
-      Text(
-        'ข้อมูลสมาชิก',
-        style: theme.textTheme.titleMedium?.copyWith(
-          fontWeight: FontWeight.bold,
-          color: _kHeaderNavy,
+      if (member.hasMember)
+        Text(
+          'ข้อมูลสมาชิก',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: _kHeaderNavy,
+          ),
         ),
-      ),
-      const SizedBox(height: 10),
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: TextField(
-              controller: memberPhoneController,
-              keyboardType: TextInputType.phone,
-              textInputAction: TextInputAction.search,
-              decoration: InputDecoration(
-                labelText: 'เบอร์โทรศัพท์',
-                hintText: 'เช่น 0812345678',
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                isDense: true,
-              ),
-              onSubmitted: (_) => onMemberSearch(),
-            ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.tonal(
-            onPressed: onMemberSearch,
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            ),
-            child: const Text('ค้นหา'),
-          ),
-        ],
-      ),
       if (member.hasMember) ...[
         const SizedBox(height: 8),
         Container(
@@ -1712,26 +1869,11 @@ class _SummaryPanel extends ConsumerWidget {
           ),
         ),
       ],
-      const SizedBox(height: 8),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: onRegisterMember,
-          icon: const Icon(Icons.person_add_alt_1_outlined, size: 20),
-          label: const Text('สมัครสมาชิก'),
-          style: TextButton.styleFrom(
-            foregroundColor: colorScheme.primary,
-            textStyle: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ),
-      if (member.searchedNotFound && !member.hasMember) ...[
-        const SizedBox(height: 8),
-        Text(
-          'ไม่พบสมาชิกจากเบอร์นี้',
-          style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.error),
+      if (taxBuyer.hasAnyInput) ...[
+        const SizedBox(height: 12),
+        _TaxInvoiceInfoCard(
+          buyer: taxBuyer,
+          onEdit: onOpenTaxInvoiceForm,
         ),
       ],
       const SizedBox(height: 20),
@@ -1743,58 +1885,91 @@ class _SummaryPanel extends ConsumerWidget {
         ),
       ),
       const SizedBox(height: 16),
-      TextField(
-        controller: barcodeController,
-        focusNode: barcodeFocus,
-        autofocus: true,
-        keyboardType: TextInputType.text,
-        textInputAction: TextInputAction.done,
-        style: theme.textTheme.titleMedium?.copyWith(
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.5,
-        ),
-        decoration: InputDecoration(
-          labelText: 'สแกนบาร์โค้ด',
-          hintText: 'พิมพ์แล้วกด Enter',
-          prefixIcon: Container(
-            margin: const EdgeInsets.only(left: 8, right: 4),
-            child: CircleAvatar(
-              backgroundColor: colorScheme.primary.withValues(alpha: 0.12),
-              child: Icon(
-                Icons.qr_code_scanner_rounded,
-                color: colorScheme.primary,
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: TextField(
+              controller: scanQtyController,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              textAlign: TextAlign.center,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: InputDecoration(
+                labelText: 'จำนวน',
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
               ),
+              onSubmitted: onScanQtySubmitted,
+              onEditingComplete: onRefocusBarcode,
             ),
           ),
-          prefixIconConstraints: const BoxConstraints(
-            minWidth: 52,
-            minHeight: 48,
-          ),
-          filled: true,
-          fillColor: Colors.white,
-          contentPadding: const EdgeInsets.symmetric(
-            vertical: 18,
-            horizontal: 16,
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide(color: colorScheme.primary, width: 2),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide(
-              color: colorScheme.primary.withValues(alpha: 0.45),
-              width: 2,
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: barcodeController,
+              focusNode: barcodeFocus,
+              autofocus: true,
+              keyboardType: TextInputType.text,
+              textInputAction: TextInputAction.done,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+              ),
+              decoration: InputDecoration(
+                labelText: 'สแกนบาร์โค้ด',
+                hintText: 'พิมพ์แล้วกด Enter',
+                prefixIcon: Container(
+                  margin: const EdgeInsets.only(left: 8, right: 4),
+                  child: CircleAvatar(
+                    backgroundColor: colorScheme.primary.withValues(
+                      alpha: 0.12,
+                    ),
+                    child: Icon(
+                      Icons.qr_code_scanner_rounded,
+                      color: colorScheme.primary,
+                    ),
+                  ),
+                ),
+                prefixIconConstraints: const BoxConstraints(
+                  minWidth: 52,
+                  minHeight: 48,
+                ),
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: 18,
+                  horizontal: 16,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: colorScheme.primary, width: 2),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: colorScheme.primary.withValues(alpha: 0.45),
+                    width: 2,
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: colorScheme.primary,
+                    width: 2.5,
+                  ),
+                ),
+              ),
+              onSubmitted: onBarcodeSubmitted,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9a-zA-Z\-]')),
+              ],
             ),
           ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide(color: colorScheme.primary, width: 2.5),
-          ),
-        ),
-        onSubmitted: onBarcodeSubmitted,
-        inputFormatters: [
-          FilteringTextInputFormatter.allow(RegExp(r'[0-9a-zA-Z\-]')),
         ],
       ),
       const SizedBox(height: 24),
@@ -1834,7 +2009,7 @@ class _SummaryPanel extends ConsumerWidget {
             ),
           ),
           Text(
-            '฿${vat.toStringAsFixed(2)}',
+                '฿${_kMoneyFmt.format(vat)}',
             style: theme.textTheme.bodyLarge?.copyWith(
               fontWeight: FontWeight.w600,
               color: colorScheme.onSurfaceVariant,
@@ -1882,27 +2057,6 @@ class _SummaryPanel extends ConsumerWidget {
         },
         onEditingComplete: onRefocusBarcode,
       ),
-      const SizedBox(height: 12),
-      OutlinedButton.icon(
-        onPressed: onOpenTaxInvoiceForm,
-        icon: const Icon(Icons.receipt_long_outlined, size: 20),
-        label: const Text('📝 กรอกข้อมูลใบกำกับภาษี'),
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size.fromHeight(44),
-          alignment: Alignment.center,
-          foregroundColor: _kHeaderNavy,
-        ),
-      ),
-      if (taxBuyer.hasAnyInput) ...[
-        const SizedBox(height: 6),
-        Text(
-          'มีข้อมูลใบกำกับภาษีสำหรับบิลนี้แล้ว',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: colorScheme.primary,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
       const SizedBox(height: 20),
       Divider(height: 1, color: _kSummaryBorder),
       const SizedBox(height: 16),
@@ -1921,12 +2075,17 @@ class _SummaryPanel extends ConsumerWidget {
             ),
           ),
           Text(
-            '฿${grand.toStringAsFixed(2)}',
-            style: theme.textTheme.displaySmall?.copyWith(
-              fontWeight: FontWeight.w800,
-              color: _kNetTotalColor,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+            '฿${_kMoneyFmt.format(grand)}',
+            style: (theme.textTheme.displaySmall ?? theme.textTheme.headlineMedium)
+                ?.copyWith(
+                  // ใหญ่ขึ้น 1 เท่า (2x จากขนาดเดิม)
+                  fontSize:
+                      ((theme.textTheme.displaySmall?.fontSize ?? 36) * 2),
+                  fontWeight: FontWeight.w800,
+                  color: _kNetTotalColor,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  height: 1.0,
+                ),
           ),
         ],
       ),
@@ -2004,8 +2163,8 @@ class _SummaryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final valueText = asDeduction
-        ? '-฿${value.toStringAsFixed(2)}'
-        : '฿${value.toStringAsFixed(2)}';
+        ? '-฿${_kMoneyFmt.format(value)}'
+        : '฿${_kMoneyFmt.format(value)}';
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -2029,6 +2188,107 @@ class _SummaryRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _TaxInvoiceInfoCard extends StatelessWidget {
+  const _TaxInvoiceInfoCard({
+    required this.buyer,
+    required this.onEdit,
+  });
+
+  final TaxInvoiceBuyerInfo buyer;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final branchText = buyer.isHeadOffice
+        ? 'สำนักงานใหญ่'
+        : 'สาขา ${buyer.branchCode.trim().isEmpty ? '—' : buyer.branchCode.trim()}';
+    final company = buyer.companyOrName.trim();
+    final taxId = buyer.taxId.trim();
+    final phone = buyer.phone.trim();
+    final address = buyer.address.trim();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.receipt_long_outlined,
+                size: 18,
+                color: Color(0xFF92400E),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'ข้อมูลกำกับภาษี',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: const Color(0xFF92400E),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: onEdit,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  foregroundColor: const Color(0xFF92400E),
+                ),
+                child: const Text('แก้ไข'),
+              ),
+            ],
+          ),
+          if (company.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              company,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (taxId.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              'Tax ID: ${TaxInvoiceBuyerInfo.formatTaxIdDisplay(taxId)}',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+          if (phone.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              'โทร: $phone',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+          const SizedBox(height: 2),
+          Text(
+            branchText,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          if (address.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              address,
+              style: theme.textTheme.bodySmall?.copyWith(height: 1.35),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

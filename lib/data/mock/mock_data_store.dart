@@ -14,8 +14,12 @@ class MockDataStore {
 
   Map<String, Product> productsByBarcode = {};
   final Map<String, MemberLookupHit> _membersByPhone = {};
+  final List<MockMemberCandidate> _memberDirectory = [];
   final Map<String, Employee> _employeesByPin = {};
   SellerProfile sellerProfile = SellerProfile.defaults;
+
+  List<MockMemberCandidate> get memberDirectory =>
+      List<MockMemberCandidate>.unmodifiable(_memberDirectory);
 
   Product? productForBarcode(String raw) {
     final key = raw.trim();
@@ -79,6 +83,7 @@ class MockDataStore {
     final map = jsonDecode(s) as Map<String, dynamic>;
     final list = map['members'] as List<dynamic>? ?? [];
     _membersByPhone.clear();
+    _memberDirectory.clear();
     for (final e in list) {
       final row = e as Map<String, dynamic>;
       final phone = row['phone'] as String;
@@ -90,6 +95,13 @@ class MockDataStore {
       _membersByPhone[digits] = MemberLookupHit(
         name: row['name'] as String,
         loyaltyPoints: (row['loyalty_points'] as num).toInt(),
+      );
+      _memberDirectory.add(
+        MockMemberCandidate(
+          phone: digits,
+          name: row['name'] as String,
+          loyaltyPoints: (row['loyalty_points'] as num).toInt(),
+        ),
       );
     }
   }
@@ -164,10 +176,36 @@ class MockDataStore {
           const MemberLookupHit(name: 'คุณสมชาย ใจดี', loyaltyPoints: 1280)
       ..['0899999999'] =
           const MemberLookupHit(name: 'คุณสมหญิง รักสบาย', loyaltyPoints: 560);
+    _memberDirectory
+      ..clear()
+      ..addAll(const [
+        MockMemberCandidate(
+          phone: '0812345678',
+          name: 'คุณสมชาย ใจดี',
+          loyaltyPoints: 1280,
+        ),
+        MockMemberCandidate(
+          phone: '0899999999',
+          name: 'คุณสมหญิง รักสบาย',
+          loyaltyPoints: 560,
+        ),
+      ]);
     _employeesByPin
       ..clear()
       ..['123456'] = const Employee(name: 'สมชาย ใจดี', role: 'แคชเชียร์')
       ..['654321'] = const Employee(name: 'นารี รักงาน', role: 'หัวหน้าแผนก');
     sellerProfile = SellerProfile.defaults;
   }
+}
+
+class MockMemberCandidate {
+  const MockMemberCandidate({
+    required this.phone,
+    required this.name,
+    required this.loyaltyPoints,
+  });
+
+  final String phone;
+  final String name;
+  final int loyaltyPoints;
 }

@@ -62,84 +62,111 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     return Scaffold(
       backgroundColor: _kBg,
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: _kNavy,
-                      borderRadius: BorderRadius.circular(20),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'assets/images/bg_login.png',
+            fit: BoxFit.cover,
+          ),
+          ColoredBox(
+            color: Colors.black.withValues(alpha: 0.38),
+          ),
+          SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  padding: const EdgeInsets.fromLTRB(24, 26, 24, 24),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.65),
                     ),
-                    child: const Icon(
-                      Icons.point_of_sale_rounded,
-                      size: 48,
-                      color: Colors.white,
-                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x33000000),
+                        blurRadius: 20,
+                        offset: Offset(0, 10),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 20),
-                  Text(
-                    'Phongchai POS',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: _kNavy,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'กรอกรหัส PIN 6 หลัก',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(_pinLength, (i) {
-                      final filled = i < _pin.length;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          width: 16,
-                          height: 16,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: filled ? _kNavy : Colors.transparent,
-                            border: Border.all(
-                              color: filled ? _kNavy : _kSummaryBorderLogin,
-                              width: 2,
-                            ),
-                          ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: _kNavy,
+                          borderRadius: BorderRadius.circular(20),
                         ),
-                      );
-                    }),
+                        child: const Icon(
+                          Icons.point_of_sale_rounded,
+                          size: 48,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Phongchai POS',
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: _kNavy,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'กรอกรหัส PIN 6 หลัก',
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(_pinLength, (i) {
+                          final filled = i < _pin.length;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              width: 16,
+                              height: 16,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: filled ? _kNavy : Colors.transparent,
+                                border: Border.all(
+                                  color: filled ? _kNavy : _kSummaryBorderLogin,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                      const SizedBox(height: 40),
+                      _Numpad(
+                        onDigit: _appendDigit,
+                        onBackspace: _backspace,
+                        onClear: _clearAll,
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'ทดลอง: 123456 หรือ 654321',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.outline,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 40),
-                  _Numpad(
-                    onDigit: _appendDigit,
-                    onBackspace: _backspace,
-                    onClear: _clearAll,
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'ทดลอง: 123456 หรือ 654321',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.outline,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
