@@ -30,6 +30,14 @@ class MockDataStore {
     return productsByBarcode[key];
   }
 
+  /// บาร์โค้ดแรกที่ตรงกับ `product.id` (สำหรับบันทึก order / SQLite)
+  String? barcodeForProductId(String productId) {
+    for (final e in productsByBarcode.entries) {
+      if (e.value.id == productId) return e.key;
+    }
+    return null;
+  }
+
   MemberLookupHit? memberLookupByPhone(String raw) {
     var digits = raw.replaceAll(RegExp(r'\D'), '');
     if (digits.length > 10) {

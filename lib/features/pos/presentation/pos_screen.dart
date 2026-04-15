@@ -21,8 +21,11 @@ import 'package:phongchai_pos/features/pos/domain/sale_record.dart';
 import 'package:phongchai_pos/features/pos/presentation/order_history_screen.dart';
 import 'package:phongchai_pos/features/pos/presentation/product_search_dialog.dart';
 import 'package:phongchai_pos/features/pos/presentation/tax_invoice_form_dialog.dart';
+import 'package:phongchai_pos/core/config/app_config.dart';
+import 'package:phongchai_pos/core/sync/invoice_number_generator.dart';
 import 'package:phongchai_pos/features/pos/providers/cart_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/pos_session_provider.dart';
+import 'package:phongchai_pos/features/pos/providers/pos_sync_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/sales_history_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/tax_invoice_buyer_provider.dart';
 /// สีธีม POS — โทน slate / navy อ่านสบายตา
@@ -146,12 +149,14 @@ class _PosAppBarHeader extends StatefulWidget {
     required this.onOpenHistory,
     required this.onOpenTaxInvoiceForm,
     required this.onOpenProductSearch,
+    required this.onSyncData,
   });
 
   final VoidCallback onOpenMemberPicker;
   final VoidCallback onOpenHistory;
   final VoidCallback onOpenTaxInvoiceForm;
   final VoidCallback onOpenProductSearch;
+  final VoidCallback onSyncData;
 
   @override
   State<_PosAppBarHeader> createState() => _PosAppBarHeaderState();
@@ -249,6 +254,12 @@ class _PosAppBarHeaderState extends State<_PosAppBarHeader> {
                     tooltip: 'ค้นหาสินค้า(F2)',
                     onPressed: widget.onOpenProductSearch,
                   ),
+                  const SizedBox(width: 16),
+                  _posNavIconButton(
+                    icon: Icons.cloud_sync_outlined,
+                    tooltip: 'ซิงค์ข้อมูล',
+                    onPressed: widget.onSyncData,
+                  ),
                 ],
               ),
             ],
@@ -276,6 +287,35 @@ class _POSScreenState extends ConsumerState<POSScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_bootstrapOfflineData());
+    });
+  }
+
+  Future<void> _bootstrapOfflineData() async {
+    final sync = ref.read(posSyncServiceProvider);
+    await sync.pullProductsOnStartup();
+    await sync.purgeSyncedOlderThanDays(AppConfig.purgeSyncedDaysAfter);
+  }
+
+  Future<void> _onSyncData() async {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('กำลังซิงค์ข้อมูล…')),
+    );
+    final sync = ref.read(posSyncServiceProvider);
+    await sync.pullProductsOnStartup(force: true);
+    final pushed = await sync.tryPushPendingOrders();
+    final purged =
+        await sync.purgeSyncedOlderThanDays(AppConfig.purgeSyncedDaysAfter);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'ซิงค์เสร็จแล้ว (ส่งบิล $pushed รายการ, ล้างบิลเก่า $purged รายการ)',
+        ),
+      ),
+    );
   }
 
   @override
@@ -536,9 +576,8 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     final net = ref.read(cartNetSubtotalProvider);
     final vat = ref.read(cartVatProvider);
     final vatEnabled = ref.read(cartVatEnabledProvider);
+    final invoiceNo = await InvoiceNumberGenerator.next();
     final soldAt = DateTime.now();
-    final invoiceNo =
-        'INV-${soldAt.toIso8601String().replaceAll(RegExp(r'[^0-9]'), '')}';
 
     final taxBuyer = ref.read(taxInvoiceBuyerProvider);
     final invoiceData = TaxInvoiceData(
@@ -560,6 +599,13 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       cashReceived: result.cashReceived,
       change: result.change,
     );
+
+    await ref.read(posSyncServiceProvider).persistCheckoutSale(
+          invoiceNo: invoiceNo,
+          grandTotal: total,
+          method: result.method,
+          lines: snapshotLines,
+        );
 
     await ref
         .read(salesHistoryProvider.notifier)
@@ -1057,6 +1103,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
               onOpenTaxInvoiceForm: _openTaxInvoiceForm,
               onOpenProductSearch: () => unawaited(_openProductSearchDialog()),
               onOpenHistory: () => unawaited(_openOrderHistory()),
+              onSyncData: () => unawaited(_onSyncData()),
             ),
           ),
           elevation: 0,
