@@ -1,5 +1,6 @@
 import 'package:phongchai_pos/data/models/product.dart';
 import 'package:phongchai_pos/features/pos/domain/cart_item.dart';
+import 'package:phongchai_pos/features/pos/domain/tax_invoice_buyer_info.dart';
 import 'package:phongchai_pos/features/pos/presentation/checkout_dialog.dart';
 
 /// บันทึกการขายหนึ่งครั้ง (เก็บในเครื่อง — ใช้ประวัติ / ออกใบกำกับย้อนหลัง)
@@ -20,6 +21,7 @@ class SaleRecord {
     required this.change,
     this.memberName,
     this.memberPhone,
+    this.taxInvoiceBuyer,
   });
 
   final String id;
@@ -42,6 +44,9 @@ class SaleRecord {
   final String? memberName;
   final String? memberPhone;
 
+  /// สแนปช็อตข้อมูลผู้เสียภาษีตอนชำระ (ถ้ากรอกไว้) — ใช้ดูย้อนหลัง / ออกใบกำกับซ้ำ
+  final TaxInvoiceBuyerInfo? taxInvoiceBuyer;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'sold_at': soldAt.toIso8601String(),
@@ -58,6 +63,8 @@ class SaleRecord {
         'change': change,
         'member_name': memberName,
         'member_phone': memberPhone,
+        if (taxInvoiceBuyer != null)
+          'tax_invoice_buyer': taxInvoiceBuyer!.toJson(),
       };
 
   factory SaleRecord.fromJson(Map<String, dynamic> json) {
@@ -81,6 +88,11 @@ class SaleRecord {
       change: (json['change'] as num).toDouble(),
       memberName: json['member_name'] as String?,
       memberPhone: json['member_phone'] as String?,
+      taxInvoiceBuyer: json['tax_invoice_buyer'] != null
+          ? TaxInvoiceBuyerInfo.fromJson(
+              json['tax_invoice_buyer'] as Map<String, dynamic>,
+            )
+          : null,
     );
   }
 

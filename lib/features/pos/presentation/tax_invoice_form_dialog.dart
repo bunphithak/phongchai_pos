@@ -34,14 +34,18 @@ Future<void> showTaxInvoiceFormDialog(
 }
 
 /// ฟอร์มสำหรับออกใบกำกับย้อนหลัง — **ไม่** เขียนลง provider; คืนค่าเมื่อกดตกลง
+///
+/// [initial] ใช้เติมฟอร์มจากข้อมูลที่เคยบันทึกในประวัติการขาย (ถ้ามี)
 Future<TaxInvoiceBuyerInfo?> showTaxInvoiceFormDialogEphemeral(
-  BuildContext context,
-) {
+  BuildContext context, {
+  TaxInvoiceBuyerInfo? initial,
+}) {
   return showDialog<TaxInvoiceBuyerInfo>(
     context: context,
     barrierDismissible: false,
-    builder: (ctx) => const TaxInvoiceFormDialog(
+    builder: (ctx) => TaxInvoiceFormDialog(
       mode: TaxInvoiceFormMode.ephemeralOnly,
+      initialOverride: initial,
     ),
   );
 }

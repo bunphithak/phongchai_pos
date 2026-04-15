@@ -41,6 +41,26 @@ class TaxInvoiceBuyerInfo {
     return '${d[0]}-${d.substring(1, 5)}-${d.substring(5, 10)}-${d.substring(10, 12)}-${d[12]}';
   }
 
+  Map<String, dynamic> toJson() => {
+        'tax_id': taxId,
+        'phone': phone,
+        'company_or_name': companyOrName,
+        'address': address,
+        'is_head_office': isHeadOffice,
+        'branch_code': branchCode,
+      };
+
+  factory TaxInvoiceBuyerInfo.fromJson(Map<String, dynamic> json) {
+    return TaxInvoiceBuyerInfo(
+      taxId: json['tax_id'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      companyOrName: json['company_or_name'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      isHeadOffice: json['is_head_office'] as bool? ?? true,
+      branchCode: json['branch_code'] as String? ?? '',
+    );
+  }
+
   TaxInvoiceBuyerInfo copyWith({
     String? taxId,
     String? phone,

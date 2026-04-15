@@ -543,6 +543,8 @@ class _POSScreenState extends ConsumerState<POSScreen> {
             change: result.change,
             memberName: member.billMember?.name,
             memberPhone: member.billMember?.phone,
+            taxInvoiceBuyer:
+                taxBuyer.hasAnyInput ? taxBuyer : null,
           ),
         );
 
