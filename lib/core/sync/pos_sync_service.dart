@@ -1,3 +1,4 @@
+import 'package:phongchai_pos/core/config/sync_config_loader.dart';
 import 'package:phongchai_pos/core/database/app_database.dart';
 import 'package:phongchai_pos/core/sync/device_identity.dart';
 import 'package:phongchai_pos/data/mock/mock_data_store.dart';
@@ -42,6 +43,7 @@ class PosSyncService {
       i++;
     }
     await _db.setLastPullTimestamp(now);
+    await SyncConfigLoader.applyBundledMock();
   }
 
   /// Push บิลที่ยังไม่ sync — รอ backend สร้าง API แล้วค่อยเชื่อม HTTP + markOrderSynced
@@ -66,6 +68,7 @@ class PosSyncService {
     required double grandTotal,
     required PosPaymentMethod method,
     required List<CartItem> lines,
+    int pointsRedeemed = 0,
   }) async {
     if (!_db.isAvailable) return null;
 
@@ -99,6 +102,7 @@ class PosSyncService {
       deviceId: deviceId,
       createdAtMs: createdAt,
       lines: rows,
+      pointsRedeemed: pointsRedeemed,
     );
 
     await tryPushPendingOrders();

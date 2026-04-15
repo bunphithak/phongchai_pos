@@ -24,6 +24,8 @@ class SaleRecord {
     this.memberName,
     this.memberPhone,
     this.taxInvoiceBuyer,
+    this.pointsRedeemed = 0,
+    this.pointsDiscountAmount = 0,
   });
 
   final String id;
@@ -56,6 +58,12 @@ class SaleRecord {
   /// สแนปช็อตข้อมูลผู้เสียภาษีตอนชำระ (ถ้ากรอกไว้) — ใช้ดูย้อนหลัง / ออกใบกำกับซ้ำ
   final TaxInvoiceBuyerInfo? taxInvoiceBuyer;
 
+  /// แต้มที่แลกในบิลนี้ (ส่ง backend)
+  final int pointsRedeemed;
+
+  /// ส่วนลดจากแต้ม (บาท)
+  final double pointsDiscountAmount;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'sold_at': soldAt.toIso8601String(),
@@ -76,6 +84,8 @@ class SaleRecord {
         'member_phone': memberPhone,
         if (taxInvoiceBuyer != null)
           'tax_invoice_buyer': taxInvoiceBuyer!.toJson(),
+        'points_redeemed': pointsRedeemed,
+        'points_discount_amount': pointsDiscountAmount,
       };
 
   factory SaleRecord.fromJson(Map<String, dynamic> json) {
@@ -106,6 +116,9 @@ class SaleRecord {
               json['tax_invoice_buyer'] as Map<String, dynamic>,
             )
           : null,
+      pointsRedeemed: (json['points_redeemed'] as num?)?.toInt() ?? 0,
+      pointsDiscountAmount:
+          (json['points_discount_amount'] as num?)?.toDouble() ?? 0,
     );
   }
 

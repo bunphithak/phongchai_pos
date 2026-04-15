@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:phongchai_pos/core/loyalty/points_redeem.dart';
 import 'package:phongchai_pos/core/utils/pdf_generator.dart';
 import 'package:phongchai_pos/data/mock/mock_data_store.dart';
 import 'package:printing/printing.dart';
@@ -139,6 +140,14 @@ Future<Uint8List> buildThermalReceiptPdfBytes(TaxInvoiceData data) async {
                   pw.Text(money.format(data.vatAmount)),
                 ],
               ),
+              if (data.pointsDiscountAmount > 1e-9)
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('แลกแต้ม (${PointsRedeem.formatPoints(data.pointsRedeemed)})'),
+                    pw.Text('-${money.format(data.pointsDiscountAmount)}'),
+                  ],
+                ),
               pw.Text('--------------------------------'),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,

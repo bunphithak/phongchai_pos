@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS orders (
   payment_method TEXT NOT NULL,
   device_id TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  is_synced INTEGER NOT NULL DEFAULT 0
+  is_synced INTEGER NOT NULL DEFAULT 0,
+  points_redeemed INTEGER NOT NULL DEFAULT 0
 )''';
 
   static const createTableOrderItems = '''

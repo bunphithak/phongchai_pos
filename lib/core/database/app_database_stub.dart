@@ -25,6 +25,7 @@ class AppDatabase {
     required String deviceId,
     required int createdAtMs,
     required List<({String productId, String barcode, String name, double price, double qty})> lines,
+    int pointsRedeemed = 0,
   }) async {
     return 0;
   }

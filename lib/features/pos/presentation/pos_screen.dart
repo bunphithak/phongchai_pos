@@ -22,6 +22,7 @@ import 'package:phongchai_pos/features/pos/presentation/order_history_screen.dar
 import 'package:phongchai_pos/features/pos/presentation/product_search_dialog.dart';
 import 'package:phongchai_pos/features/pos/presentation/tax_invoice_form_dialog.dart';
 import 'package:phongchai_pos/core/config/app_config.dart';
+import 'package:phongchai_pos/core/loyalty/points_redeem.dart';
 import 'package:phongchai_pos/core/sync/invoice_number_generator.dart';
 import 'package:phongchai_pos/features/pos/providers/cart_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/pos_session_provider.dart';
@@ -67,18 +68,6 @@ final NumberFormat _kMoneyFmt = NumberFormat('#,##0.00', 'en_US');
 
 /// ยอดรวมสุทธิ — สีน้ำเงินเข้มให้เด่น
 const _kNetTotalColor = Color(0xFF0D47A1);
-
-String _formatLoyaltyPoints(int points) {
-  final s = points.abs().toString();
-  final buf = StringBuffer();
-  for (var i = 0; i < s.length; i++) {
-    if (i > 0 && (s.length - i) % 3 == 0) {
-      buf.write(',');
-    }
-    buf.write(s[i]);
-  }
-  return buf.toString();
-}
 
 String _formatDiscountField(double v) {
   if (v == 0) return '';
@@ -559,15 +548,21 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       return;
     }
 
+    final memberBefore = ref.read(posMemberProvider);
     final result = await showPosCheckoutDialog(
       context,
       grandTotal: total,
       promptPayId: MockDataStore.instance.sellerProfile.promptpayId,
+      memberLoyaltyPoints: memberBefore.billMember?.loyaltyPoints,
+      pointExchangeRate: AppConfig.pointExchangeRate,
     );
     if (!mounted || result == null) {
       _refocusBarcode();
       return;
     }
+
+    final amountDue =
+        (total - result.pointsDiscountAmount).clamp(0.0, double.infinity);
 
     final snapshotLines = List<CartItem>.from(lines);
     final member = ref.read(posMemberProvider);
@@ -592,19 +587,22 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       netBeforeVat: net,
       vatAmount: vat,
       vatEnabled: vatEnabled,
-      grandTotal: total,
+      grandTotal: amountDue,
       method: result.method,
       cashAmount: result.cashAmount,
       transferAmount: result.transferAmount,
       cashReceived: result.cashReceived,
       change: result.change,
+      pointsRedeemed: result.pointsRedeemed,
+      pointsDiscountAmount: result.pointsDiscountAmount,
     );
 
     await ref.read(posSyncServiceProvider).persistCheckoutSale(
           invoiceNo: invoiceNo,
-          grandTotal: total,
+          grandTotal: amountDue,
           method: result.method,
           lines: snapshotLines,
+          pointsRedeemed: result.pointsRedeemed,
         );
 
     await ref
@@ -620,7 +618,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
             netBeforeVat: net,
             vatAmount: vat,
             vatEnabled: vatEnabled,
-            grandTotal: total,
+            grandTotal: amountDue,
             method: result.method,
             cashAmount: result.cashAmount,
             transferAmount: result.transferAmount,
@@ -630,6 +628,8 @@ class _POSScreenState extends ConsumerState<POSScreen> {
             memberPhone: member.billMember?.phone,
             taxInvoiceBuyer:
                 taxBuyer.hasAnyInput ? taxBuyer : null,
+            pointsRedeemed: result.pointsRedeemed,
+            pointsDiscountAmount: result.pointsDiscountAmount,
           ),
         );
 
@@ -930,7 +930,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
                                     dense: true,
                                     title: Text(m.name),
                                     subtitle: Text(
-                                      '${m.phone} • แต้ม ${_formatLoyaltyPoints(m.loyaltyPoints)}',
+                                      '${m.phone} • แต้ม ${PointsRedeem.formatPoints(m.loyaltyPoints)}',
                                     ),
                                     onTap: () => Navigator.of(ctx).pop(m),
                                   );
@@ -2036,7 +2036,7 @@ class _SummaryPanel extends ConsumerWidget {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    'แต้มสะสม ${_formatLoyaltyPoints(member.billMember!.loyaltyPoints)} คะแนน',
+                    'แต้มสะสม ${PointsRedeem.formatPoints(member.billMember!.loyaltyPoints)} คะแนน',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                       color: colorScheme.onSurface,
@@ -2057,7 +2057,7 @@ class _SummaryPanel extends ConsumerWidget {
       ],
       const SizedBox(height: 20),
       Text(
-        'สรุปยอด',
+        'เพิ่มสินค้า',
         style: theme.textTheme.titleLarge?.copyWith(
           fontWeight: FontWeight.bold,
           color: _kHeaderNavy,

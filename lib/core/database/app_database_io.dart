@@ -24,7 +24,7 @@ class AppDatabase {
     final path = p.join(dir.path, 'phongchai_pos.db');
     _db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute(DatabaseSchema.createTableProducts);
         await db.execute(DatabaseSchema.indexProductsBarcode);
@@ -35,8 +35,25 @@ class AppDatabase {
         await db.execute(DatabaseSchema.createTableSyncStatus);
         await db.execute(DatabaseSchema.insertDefaultSyncStatus);
       },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await _ensureOrdersPointsRedeemedColumn(db);
+        }
+      },
     );
+    await _ensureOrdersPointsRedeemedColumn(_db!);
     await _db!.execute('PRAGMA foreign_keys = ON');
+  }
+
+  /// กรณี DB เคยขึ้น user_version = 2 แต่ยังไม่มีคอลัมน์ (onUpgrade ไม่รันอีก) — เติมคอลัมน์เมื่อขาด
+  static Future<void> _ensureOrdersPointsRedeemedColumn(Database db) async {
+    final rows = await db.rawQuery('PRAGMA table_info(orders)');
+    final has = rows.any((r) => (r['name'] as String?) == 'points_redeemed');
+    if (!has) {
+      await db.execute(
+        'ALTER TABLE orders ADD COLUMN points_redeemed INTEGER NOT NULL DEFAULT 0',
+      );
+    }
   }
 
   Future<void> close() async {
@@ -74,6 +91,7 @@ class AppDatabase {
     required String deviceId,
     required int createdAtMs,
     required List<({String productId, String barcode, String name, double price, double qty})> lines,
+    int pointsRedeemed = 0,
   }) async {
     final db = await database;
     return db.transaction<int>((txn) async {
@@ -84,6 +102,7 @@ class AppDatabase {
         'device_id': deviceId,
         'created_at': createdAtMs,
         'is_synced': 0,
+        'points_redeemed': pointsRedeemed,
       });
 
       for (final line in lines) {

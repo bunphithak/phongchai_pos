@@ -129,6 +129,8 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
       cashReceived: sale.cashReceived,
       change: sale.change,
       isBackdated: true,
+      pointsRedeemed: sale.pointsRedeemed,
+      pointsDiscountAmount: sale.pointsDiscountAmount,
     );
 
     await printTaxInvoiceWithFallback(context: context, data: invoiceData);

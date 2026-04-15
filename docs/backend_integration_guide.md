@@ -12,6 +12,7 @@
 | รายการ | ที่มา |
 |--------|--------|
 | Base URL | `.env` → `API_BASE_URL` (อ่านใน `lib/core/config/app_config.dart`) |
+| อัตราแลกแต้ม | `.env` → `POINT_EXCHANGE_RATE` + ค่าที่ซิงค์จาก backend (เก็บใน `SharedPreferences` ผ่าน `AppConfig.setPointExchangeRateFromSync`) |
 | ซิงค์ / purge วัน | `.env` → `POS_PURGE_SYNCED_DAYS` |
 | เชื่อมบริการซิงค์ | `lib/core/sync/pos_sync_service.dart` + `lib/features/pos/providers/pos_sync_provider.dart` |
 | HTTP client กลาง (ยังว่าง) | `lib/data/remote/api_client.dart` — ตั้งใจให้ใส่ `http`/`dio` ที่นี่ |
@@ -91,11 +92,15 @@
   "payment_method": "cash",
   "device_id": "A1B2C3D4",
   "created_at": 1735689600000,
+  "points_redeemed": 50,
   "items": [
     { "product_id": "prod-001", "qty": 2, "price": 50.25 }
   ]
 }
 ```
+
+- `total_amount` = ยอดที่ลูกค้าจ่ายจริง (หลังหักส่วนลดแลกแต้มแล้ว)
+- `points_redeemed` = จำนวนแต้มที่แลกในบิลนี้ (0 ถ้าไม่ใช้) — ใช้หักแต้มในฐานข้อมูลหลัก
 
 **แอปต้องไปแตะ:**
 
@@ -179,7 +184,12 @@
 
 ไฟล์: `lib/core/database/database_schema.dart`
 
-- `products`, `orders`, `order_items`, `sync_status`
+- `products`, `orders` (รวม `points_redeemed`), `order_items`, `sync_status`
+
+### คอนฟิกแลกแต้ม (ซิงค์)
+
+- ตอนนี้ mock: `assets/mock/sync_config.json` มี `point_exchange_rate` — โหลดหลัง `MockDataStore.loadAll()` และหลัง `pullProductsOnStartup` สำเร็จ (`SyncConfigLoader.applyBundledMock`)
+- เมื่อมี API จริง: แนะนำรวม `point_exchange_rate` ใน response ของ Pull หรือ endpoint `/v1/config` แล้วเรียก `AppConfig.setPointExchangeRateFromSync`
 
 ---
 

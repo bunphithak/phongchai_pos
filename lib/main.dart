@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:phongchai_pos/core/config/app_config.dart';
+import 'package:phongchai_pos/core/config/sync_config_loader.dart';
 import 'package:phongchai_pos/core/database/app_database.dart';
 import 'package:phongchai_pos/core/theme/app_theme.dart';
 import 'package:phongchai_pos/data/mock/mock_data_store.dart';
@@ -16,7 +18,9 @@ Future<void> main() async {
   } catch (e, st) {
     debugPrint('dotenv load failed: $e\n$st');
   }
+  await AppConfig.initPointExchangeRate();
   await MockDataStore.instance.loadAll();
+  await SyncConfigLoader.applyBundledMock();
   if (!kIsWeb) {
     await AppDatabase.instance.init();
   }

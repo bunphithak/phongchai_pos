@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:phongchai_pos/core/config/seller_profile.dart';
+import 'package:phongchai_pos/core/loyalty/points_redeem.dart';
 import 'package:phongchai_pos/data/mock/mock_data_store.dart';
 import 'package:phongchai_pos/features/pos/domain/cart_item.dart';
 import 'package:phongchai_pos/features/pos/domain/tax_invoice_buyer_info.dart';
@@ -63,6 +64,8 @@ class TaxInvoiceData {
     this.cashReceived,
     required this.change,
     this.isBackdated = false,
+    this.pointsRedeemed = 0,
+    this.pointsDiscountAmount = 0,
   });
 
   final DateTime issuedAt;
@@ -94,6 +97,9 @@ class TaxInvoiceData {
 
   /// ใบกำกับที่ออกย้อนหลังจากประวัติการขาย
   final bool isBackdated;
+
+  final int pointsRedeemed;
+  final double pointsDiscountAmount;
 }
 
 SellerProfile _seller() => MockDataStore.instance.sellerProfile;
@@ -269,6 +275,12 @@ Future<Uint8List> buildTaxInvoicePdf(TaxInvoiceData data) async {
                   _sumRow(
                     'ภาษีมูลค่าเพิ่ม 7%',
                     moneyFmt.format(data.vatAmount),
+                    t,
+                  ),
+                if (data.pointsDiscountAmount > 1e-9)
+                  _sumRow(
+                    'ส่วนลดแลกแต้ม (${PointsRedeem.formatPoints(data.pointsRedeemed)} แต้ม)',
+                    '-${moneyFmt.format(data.pointsDiscountAmount)}',
                     t,
                   ),
                 pw.Divider(thickness: 1, color: PdfColors.black),
