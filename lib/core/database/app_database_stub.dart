@@ -41,4 +41,15 @@ class AppDatabase {
   Future<int> deleteSyncedOrdersOlderThan({required int cutoffMs}) async => 0;
 
   Future<List<Map<String, Object?>>> getOrderItems(int orderId) async => [];
+
+  Future<Map<String, Object?>?> getOrderByInvoiceNo(String invoiceNo) async =>
+      null;
+
+  Future<bool> voidOrderByInvoiceNo({
+    required String invoiceNo,
+    required String reason,
+    required String voidedByLabel,
+    required int voidedAtMs,
+  }) async =>
+      false;
 }

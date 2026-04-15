@@ -3,6 +3,7 @@ import 'package:phongchai_pos/core/database/app_database.dart';
 import 'package:phongchai_pos/core/sync/device_identity.dart';
 import 'package:phongchai_pos/data/mock/mock_data_store.dart';
 import 'package:phongchai_pos/features/pos/domain/cart_item.dart';
+import 'package:phongchai_pos/features/pos/domain/sale_record.dart';
 import 'package:phongchai_pos/features/pos/presentation/checkout_dialog.dart';
 
 /// Offline-First: บันทึก SQLite ก่อน แล้วค่อย Push เมื่อมี [apiBaseUrl]
@@ -14,6 +15,37 @@ class PosSyncService {
   final String? apiBaseUrl;
 
   final AppDatabase _db = AppDatabase.instance;
+
+  void _applyMockStockDeltaForLines(List<CartItem> lines, int sign) {
+    for (final line in lines) {
+      final bc = MockDataStore.instance.barcodeForProductId(line.product.id);
+      if (bc == null) continue;
+      MockDataStore.instance.adjustStockByBarcode(bc, sign * line.quantity);
+    }
+  }
+
+  Future<void> _restoreMockAfterVoid({
+    required bool dbVoidSucceeded,
+    required SaleRecord sale,
+  }) async {
+    if (!_db.isAvailable) {
+      _applyMockStockDeltaForLines(sale.lines, 1);
+      return;
+    }
+    if (dbVoidSucceeded) {
+      _applyMockStockDeltaForLines(sale.lines, 1);
+      return;
+    }
+    final row = await _db.getOrderByInvoiceNo(sale.invoiceNo);
+    if (row == null) {
+      _applyMockStockDeltaForLines(sale.lines, 1);
+      return;
+    }
+    final voided = (row['is_voided'] as int? ?? 0) == 1;
+    if (voided) {
+      return;
+    }
+  }
 
   Future<void> pullProductsOnStartup({bool force = false}) async {
     if (!_db.isAvailable) return;
@@ -70,8 +102,6 @@ class PosSyncService {
     required List<CartItem> lines,
     int pointsRedeemed = 0,
   }) async {
-    if (!_db.isAvailable) return null;
-
     final deviceId = await DeviceIdentity.getOrCreateDeviceId();
     final createdAt = DateTime.now().millisecondsSinceEpoch;
     final paymentMethod = switch (method) {
@@ -95,6 +125,11 @@ class PosSyncService {
       ));
     }
 
+    if (!_db.isAvailable) {
+      _applyMockStockDeltaForLines(lines, -1);
+      return null;
+    }
+
     final orderId = await _db.insertOrderWithItems(
       invoiceNo: invoiceNo,
       totalAmount: grandTotal,
@@ -105,7 +140,30 @@ class PosSyncService {
       pointsRedeemed: pointsRedeemed,
     );
 
+    _applyMockStockDeltaForLines(lines, -1);
+
     await tryPushPendingOrders();
     return orderId;
+  }
+
+  /// ยกเลิกบิล: อัปเดต SQLite (ถ้ามี) + คืนสต็อก mock + ให้ caller อัปเดตประวัติใน prefs
+  Future<bool> voidRecordedSale({
+    required SaleRecord sale,
+    required String reason,
+    required String voidedByLabel,
+  }) async {
+    if (sale.isVoided) return false;
+    final ms = DateTime.now().millisecondsSinceEpoch;
+    var dbOk = false;
+    if (_db.isAvailable) {
+      dbOk = await _db.voidOrderByInvoiceNo(
+        invoiceNo: sale.invoiceNo,
+        reason: reason,
+        voidedByLabel: voidedByLabel,
+        voidedAtMs: ms,
+      );
+    }
+    await _restoreMockAfterVoid(dbVoidSucceeded: dbOk, sale: sale);
+    return true;
   }
 }

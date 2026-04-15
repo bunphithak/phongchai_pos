@@ -31,6 +31,26 @@ class SalesHistoryRepository {
     await _saveAll(all);
   }
 
+  /// ทำเครื่องหมายว่าบิลถูก void (ตามเลขที่ใบกำกับ)
+  Future<bool> voidSaleByInvoiceNo({
+    required String invoiceNo,
+    required String reason,
+    required DateTime voidedAt,
+  }) async {
+    final all = await loadAll();
+    final idx = all.indexWhere(
+      (s) => s.invoiceNo == invoiceNo && !s.isVoided,
+    );
+    if (idx < 0) return false;
+    all[idx] = all[idx].copyWith(
+      isVoided: true,
+      voidReason: reason,
+      voidedAt: voidedAt,
+    );
+    await _saveAll(all);
+    return true;
+  }
+
   Future<void> _saveAll(List<SaleRecord> sales) async {
     final prefs = await SharedPreferences.getInstance();
     final encoded = jsonEncode(sales.map((e) => e.toJson()).toList());

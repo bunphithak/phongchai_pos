@@ -30,6 +30,8 @@ import 'package:phongchai_pos/features/pos/providers/pos_session_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/pos_sync_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/sales_history_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/tax_invoice_buyer_provider.dart';
+import 'package:phongchai_pos/features/inventory/presentation/inventory_screen.dart';
+import 'package:phongchai_pos/features/inventory/providers/inventory_provider.dart';
 /// สีธีม POS — โทน slate / navy อ่านสบายตา
 const _kHeaderNavy = Color(0xFF1E293B);
 
@@ -102,13 +104,15 @@ Widget _posNavIconButton({
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, color: Colors.white.withValues(alpha: 0.95), size: 24),
-        SizedBox(height: 10),
+        Icon(icon, color: Colors.white.withValues(alpha: 0.95), size: 22),
+        const SizedBox(height: 6),
         Text(
           tooltip,
-          style: TextStyle(color: Colors.white, fontSize: 10),
+          style: const TextStyle(color: Colors.white, fontSize: 9, height: 1.1),
           textAlign: TextAlign.center,
+          maxLines: 2,
         ),
       ],
     ),
@@ -137,15 +141,19 @@ class _PosAppBarHeader extends StatefulWidget {
   const _PosAppBarHeader({
     required this.onOpenMemberPicker,
     required this.onOpenHistory,
+    required this.onOpenTodaySummary,
     required this.onOpenTaxInvoiceForm,
     required this.onOpenProductSearch,
+    required this.onOpenInventory,
     required this.onSyncData,
   });
 
   final VoidCallback onOpenMemberPicker;
   final VoidCallback onOpenHistory;
+  final VoidCallback onOpenTodaySummary;
   final VoidCallback onOpenTaxInvoiceForm;
   final VoidCallback onOpenProductSearch;
+  final VoidCallback onOpenInventory;
   final VoidCallback onSyncData;
 
   @override
@@ -180,7 +188,6 @@ class _PosAppBarHeaderState extends State<_PosAppBarHeader> {
       alignment: Alignment.centerLeft,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Column(
@@ -214,11 +221,10 @@ class _PosAppBarHeaderState extends State<_PosAppBarHeader> {
             ],
           ),
           const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _posNavIconButton(
@@ -234,6 +240,12 @@ class _PosAppBarHeaderState extends State<_PosAppBarHeader> {
                   ),
                   const SizedBox(width: 16),
                   _posNavIconButton(
+                    icon: Icons.bar_chart_rounded,
+                    tooltip: 'สรุปยอดวันนี้',
+                    onPressed: widget.onOpenTodaySummary,
+                  ),
+                  const SizedBox(width: 16),
+                  _posNavIconButton(
                     icon: Icons.edit_document,
                     tooltip: 'ใบกำกับภาษี',
                     onPressed: widget.onOpenTaxInvoiceForm,
@@ -246,13 +258,19 @@ class _PosAppBarHeaderState extends State<_PosAppBarHeader> {
                   ),
                   const SizedBox(width: 16),
                   _posNavIconButton(
+                    icon: Icons.warehouse_outlined,
+                    tooltip: 'สต็อกสินค้า',
+                    onPressed: widget.onOpenInventory,
+                  ),
+                  const SizedBox(width: 16),
+                  _posNavIconButton(
                     icon: Icons.cloud_sync_outlined,
                     tooltip: 'ซิงค์ข้อมูล',
                     onPressed: widget.onSyncData,
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ],
       ),
@@ -267,18 +285,40 @@ class POSScreen extends ConsumerStatefulWidget {
   ConsumerState<POSScreen> createState() => _POSScreenState();
 }
 
-class _POSScreenState extends ConsumerState<POSScreen> {
+class _POSScreenState extends ConsumerState<POSScreen>
+    with WidgetsBindingObserver {
   final _barcodeController = TextEditingController();
   final _scanQtyController = TextEditingController(text: '1');
   final _barcodeFocus = FocusNode();
   final _discountController = TextEditingController();
   final _memberPhoneController = TextEditingController();
 
+  /// กันสถานะปุ่มค้าง (KeyDown ซ้ำ) บน macOS / สแกนเนอร์ — ซิงค์กับ engine
+  void _syncHardwareKeyboardState() {
+    unawaited(HardwareKeyboard.instance.syncKeyboardState());
+  }
+
+  void _onBarcodeFocusChanged() {
+    if (_barcodeFocus.hasFocus) {
+      _syncHardwareKeyboardState();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncHardwareKeyboardState();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _barcodeFocus.addListener(_onBarcodeFocusChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_bootstrapOfflineData());
+      _syncHardwareKeyboardState();
     });
   }
 
@@ -286,6 +326,75 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     final sync = ref.read(posSyncServiceProvider);
     await sync.pullProductsOnStartup();
     await sync.purgeSyncedOlderThanDays(AppConfig.purgeSyncedDaysAfter);
+  }
+
+  /// สรุปยอดขายวันนี้จากประวัติในเครื่อง (ไม่รวมบิลที่ void)
+  Future<void> _showTodaySalesSummary() async {
+    final async = ref.read(salesHistoryProvider);
+    final list = async.valueOrNull ?? [];
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day);
+    final end = start.add(const Duration(days: 1));
+    final today = list.where((s) {
+      if (s.isVoided) return false;
+      final t = s.soldAt.toLocal();
+      return !t.isBefore(start) && t.isBefore(end);
+    }).toList();
+    var cash = 0.0;
+    var transfer = 0.0;
+    var mixed = 0.0;
+    for (final s in today) {
+      switch (s.method) {
+        case PosPaymentMethod.cash:
+          cash += s.grandTotal;
+        case PosPaymentMethod.transfer:
+          transfer += s.grandTotal;
+        case PosPaymentMethod.mixed:
+          mixed += s.grandTotal;
+      }
+    }
+    final total = cash + transfer + mixed;
+    final moneyFmt = NumberFormat('#,##0.00', 'en_US');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('สรุปยอดวันนี้'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('จำนวนบิล: ${today.length}'),
+              const SizedBox(height: 12),
+              Text('เงินสด: ฿${moneyFmt.format(cash)}'),
+              Text('โอนเงิน: ฿${moneyFmt.format(transfer)}'),
+              Text('เงินสด + โอน: ฿${moneyFmt.format(mixed)}'),
+              const Divider(height: 24),
+              Text(
+                'รวมทั้งสิ้น: ฿${moneyFmt.format(total)}',
+                style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'ไม่รวมบิลที่ยกเลิกแล้ว — ข้อมูลจากประวัติในเครื่อง',
+                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('ตกลง'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _onSyncData() async {
@@ -335,6 +444,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     }
 
     if (!mounted) return;
+    ref.invalidate(inventoryProvider);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -346,6 +456,8 @@ class _POSScreenState extends ConsumerState<POSScreen> {
 
   @override
   void dispose() {
+    _barcodeFocus.removeListener(_onBarcodeFocusChanged);
+    WidgetsBinding.instance.removeObserver(this);
     _barcodeController.dispose();
     _scanQtyController.dispose();
     _barcodeFocus.dispose();
@@ -406,6 +518,39 @@ class _POSScreenState extends ConsumerState<POSScreen> {
         _refocusBarcode();
       }
       return;
+    }
+
+    final stock = MockDataStore.instance.stockByBarcode[code];
+    if (stock != null) {
+      final cartLines = ref.read(cartProvider);
+      final inCart = cartLines
+          .where((e) => e.product.id == product.id)
+          .fold<int>(0, (s, e) => s + e.quantity);
+      if (inCart + qty > stock) {
+        _barcodeController.clear();
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: true,
+          barrierColor: Colors.black.withValues(alpha: 0.45),
+          builder: (ctx) => AlertDialog(
+            title: const Text('สต็อกไม่พอ'),
+            content: Text(
+              'คงเหลือ $stock ${product.unit} — ในตะกร้ามี $inCart ชิ้น',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('ตกลง'),
+              ),
+            ],
+          ),
+        );
+        if (mounted) {
+          _refocusBarcode();
+        }
+        return;
+      }
     }
 
     final cart = ref.read(cartProvider.notifier);
@@ -641,6 +786,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
           lines: snapshotLines,
           pointsRedeemed: result.pointsRedeemed,
         );
+    ref.invalidate(inventoryProvider);
 
     await ref
         .read(salesHistoryProvider.notifier)
@@ -1014,6 +1160,15 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     if (mounted) _refocusBarcode();
   }
 
+  Future<void> _openInventoryScreen() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const InventoryScreen(),
+      ),
+    );
+    if (mounted) _refocusBarcode();
+  }
+
   Future<void> _showEditQuantityDialog(int index, CartItem item) async {
     final controller = TextEditingController(text: '${item.quantity}');
     final ok = await showDialog<bool>(
@@ -1140,6 +1295,8 @@ class _POSScreenState extends ConsumerState<POSScreen> {
               onOpenTaxInvoiceForm: _openTaxInvoiceForm,
               onOpenProductSearch: () => unawaited(_openProductSearchDialog()),
               onOpenHistory: () => unawaited(_openOrderHistory()),
+              onOpenTodaySummary: () => unawaited(_showTodaySalesSummary()),
+              onOpenInventory: () => unawaited(_openInventoryScreen()),
               onSyncData: () => unawaited(_onSyncData()),
             ),
           ),

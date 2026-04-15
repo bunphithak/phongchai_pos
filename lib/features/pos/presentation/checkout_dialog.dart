@@ -153,6 +153,9 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
   double get _transfer => _parseOrZero(_transferController.text);
   double get _totalPaid => _cash + _transfer;
 
+  /// ยอดโอนสูงสุด (ไม่เกินยอดต้องชำระทั้งบิล — เงินสดจะถูกปรับเป็น g−t อัตโนมัติ)
+  double get _maxTransferAllowed => _amountDue;
+
   /// เงินทอน: นับเมื่อมีส่วนเงินสด และยอดรวมเกินยอดสุทธิ
   double get _change {
     if (_cash <= 1e-9) return 0;
@@ -225,8 +228,14 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
   void _onTransferChanged() {
     if (_programmatic) return;
     _programmatic = true;
-    final t = _parseOrZero(_transferController.text);
+    var t = _parseOrZero(_transferController.text);
     final g = _amountDue;
+    // แบ่งยอด: โอนได้ไม่เกินยอดต้องชำระทั้งหมด แล้วตั้งเงินสด = ส่วนที่เหลือ
+    // (ถ้าใช้ g−เงินสดเดิมเป็นเพดาน จะได้ 0 ตอนเงินสดเต็มยอด — พิมพ์โอนไม่ได้)
+    if (t > g + 1e-9) {
+      t = g;
+      _transferController.text = _fmtSyncedAmount(t);
+    }
     final remainder = (g - t).clamp(0.0, double.infinity);
     _cashController.text = _fmtSyncedAmount(remainder);
     _programmatic = false;
@@ -235,18 +244,18 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
 
   void _exactCash() {
     _programmatic = true;
-    final t = _parseOrZero(_transferController.text);
     final g = _amountDue;
-    _cashController.text = _fmtSyncedAmount((g - t).clamp(0.0, double.infinity));
+    _cashController.text = _fmtSyncedAmount(g);
+    _transferController.text = _fmtSyncedAmount(0);
     _programmatic = false;
     setState(() {});
   }
 
   void _exactTransfer() {
     _programmatic = true;
-    final c = _parseOrZero(_cashController.text);
     final g = _amountDue;
-    _transferController.text = _fmtSyncedAmount((g - c).clamp(0.0, double.infinity));
+    _transferController.text = _fmtSyncedAmount(g);
+    _cashController.text = _fmtSyncedAmount(0);
     _programmatic = false;
     setState(() {});
   }
@@ -477,6 +486,8 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
                       ],
                       decoration: InputDecoration(
                         labelText: 'ยอดเงินโอน',
+                        helperText:
+                            'สูงสุด ฿${_maxTransferAllowed.toStringAsFixed(2)} (เงินสดปรับตามยอดโอน)',
                         prefixText: '฿ ',
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),

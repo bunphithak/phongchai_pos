@@ -38,6 +38,15 @@ class MockDataStore {
     return null;
   }
 
+  /// ปรับสต็อกตามบาร์โค้ด (บวก = คืนของ, ลบ = ขายออก) — `null` = ไม่จำกัดสต็อกใน mock
+  void adjustStockByBarcode(String barcode, num delta) {
+    final key = barcode.trim();
+    final current = stockByBarcode[key];
+    if (current == null) return;
+    final next = (current + delta).round();
+    stockByBarcode[key] = next.clamp(0, 999999999);
+  }
+
   MemberLookupHit? memberLookupByPhone(String raw) {
     var digits = raw.replaceAll(RegExp(r'\D'), '');
     if (digits.length > 10) {

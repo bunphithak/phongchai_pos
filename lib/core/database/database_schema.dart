@@ -26,7 +26,11 @@ CREATE TABLE IF NOT EXISTS orders (
   device_id TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   is_synced INTEGER NOT NULL DEFAULT 0,
-  points_redeemed INTEGER NOT NULL DEFAULT 0
+  points_redeemed INTEGER NOT NULL DEFAULT 0,
+  is_voided INTEGER NOT NULL DEFAULT 0,
+  void_reason TEXT,
+  voided_at_ms INTEGER,
+  voided_by_label TEXT
 )''';
 
   static const createTableOrderItems = '''

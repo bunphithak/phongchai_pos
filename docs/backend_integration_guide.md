@@ -37,7 +37,7 @@
 | **ค้นหาสมาชิกจากเบอร์** | GET lookup ตามเบอร์ (10 หลัก) | `lib/features/pos/domain/pos_member_lookup.dart`, `lib/features/pos/providers/pos_session_provider.dart` (`PosMemberNotifier.searchByPhone`) |
 | **สมัครสมาชิกใหม่** | POST สมาชิก | `lib/data/remote/member_registration.dart` (`registerMember`), UI ที่เรียกจาก `member_register_dialog.dart` (ถ้ามี) |
 | **บิลพัก (Hold)** | ไม่ต้องมี API — เก็บเฉพาะเครื่อง | `lib/features/pos/providers/pos_session_provider.dart` (`heldBillProvider`) |
-| **สต็อกคลัง / หน้า Inventory** | หน้า UI ยังว่าง — อาจใช้ endpoint สต็อกเดียวกับแคตตาล็อก | `lib/features/inventory/presentation/inventory_screen.dart`, `lib/features/inventory/providers/inventory_provider.dart` |
+| **สต็อกคลัง / หน้า Inventory** | สต็อกมาจาก Pull เดียวกับแคตตาล็อก (`stock_qty` / อัปเดตหลังขายใน mock ขณะ offline) | `lib/features/inventory/presentation/inventory_screen.dart`, `lib/features/inventory/providers/inventory_provider.dart` (โหลดจาก `MockDataStore` — ต่อ API แล้วให้ชี้ไป DB/response เดียวกับ `pullProductsOnStartup`) |
 
 ---
 
@@ -93,6 +93,9 @@
   "device_id": "A1B2C3D4",
   "created_at": 1735689600000,
   "points_redeemed": 50,
+  "cash_amount": 200.0,
+  "transfer_amount": 150.5,
+  "change_amount": 0,
   "items": [
     { "product_id": "prod-001", "qty": 2, "price": 50.25 }
   ]
@@ -101,11 +104,40 @@
 
 - `total_amount` = ยอดที่ลูกค้าจ่ายจริง (หลังหักส่วนลดแลกแต้มแล้ว)
 - `points_redeemed` = จำนวนแต้มที่แลกในบิลนี้ (0 ถ้าไม่ใช้) — ใช้หักแต้มในฐานข้อมูลหลัก
+- **`payment_method`** — ค่าที่แอปส่งไป SQLite / ควรส่งต่อ backend:
+  - `cash` — จ่ายเงินสดอย่างเดียว (หรือมีเงินทอนเมื่อรับเงินสดเกิน)
+  - `transfer` — ชำระด้วยโอน/PromptPay เท่านั้น (`transfer_amount` ≈ `total_amount`)
+  - `mixed` — แบ่งชำระทั้งเงินสดและโอน (ยอดในช่องสองช่องรวมกับเงินทอนต้องสอดคล้องกับ UI ชำระเงิน)
+- **`cash_amount` / `transfer_amount` / `change_amount` (แนะนำให้ backend รองรับ)**  
+  - แอปเก็บใน `SaleRecord` / ใบเสร็จแล้ว — ตอน Push จาก SQLite ยัง **ไม่ได้** map ทุกฟิลด์ลง `orders` ใน DB (มีแค่ `payment_method` + `total_amount`)  
+  - เมื่อ implement `tryPushPendingOrders` จริง แนะนำอ่านจาก `SaleRecord` หรือขยายตาราง `orders` แล้วส่งสามฟิลด์นี้เพื่อกระทบบัญชีและเทียบ PromptPay
+
+**UI ชำระเงิน (อ้างอิงพฤติกรรมลูกค้า):**
+
+- หน้า `showPosCheckoutDialog` แบ่งยอด **เงินสด + โอน = ยอดต้องชำระ** (ยอดโอนไม่เกินยอดบิล; เงินสดปรับตามยอดโอน) — เงินทอนนับเมื่อรับเงินสดเกิน  
+- ไฟล์: `lib/features/pos/presentation/checkout_dialog.dart`
 
 **แอปต้องไปแตะ:**
 
 - `lib/core/sync/pos_sync_service.dart` — ใน `tryPushPendingOrders` ใส่ `POST` + `jsonEncode` (ใช้ `lib/data/remote/api_client.dart` แนะนำ)
 - เพิ่ม header `Authorization` เมื่อมี token จาก login
+
+---
+
+### ยกเลิกบิล (Void) — แนะนำสำหรับ backend
+
+**สถานะปัจจุบัน:** แอปอัปเดต SQLite (`is_voided`, `void_reason`, `voided_at_ms`, `voided_by_label`) + คืนสต็อก mock + อัปเดตประวัติในเครื่อง — **ยังไม่ส่ง HTTP**
+
+**Backend แนะนำ (ตัวอย่างสัญญา):**
+
+- `POST /v1/orders/{invoice_no}/void`  
+  - Body: `{ "reason": "...", "voided_by": "ชื่อพนักงาน" }`  
+  - Response **2xx** → ลูกค้าถือว่ายกเลิกบิลสำเร็จ; ฝั่ง server คืนสต็อก / กลับแต้มตามนโยบาย
+
+**แอปต้องไปแตะ:**
+
+- `lib/core/sync/pos_sync_service.dart` (`voidRecordedSale`) — หลังบันทึก local สำเร็จ อาจเรียก API ด้านบน  
+- `lib/features/pos/presentation/order_history_screen.dart` — UI ยกเลิกบิล
 
 ---
 
@@ -184,7 +216,7 @@
 
 ไฟล์: `lib/core/database/database_schema.dart`
 
-- `products`, `orders` (รวม `points_redeemed`), `order_items`, `sync_status`
+- `products`, `orders` (รวม `points_redeemed`, `is_voided`, `void_reason`, `voided_at_ms`, `voided_by_label`), `order_items`, `sync_status`
 
 ### คอนฟิกแลกแต้ม (ซิงค์)
 
@@ -197,7 +229,8 @@
 
 - [ ] ใส่ `API_BASE_URL` ใน `.env`  
 - [ ] Implement `api_client.dart` (base URL + auth header)  
-- [ ] `pos_sync_service.dart`: Pull จริง + Push จริง + `markOrderSynced`  
+- [ ] `pos_sync_service.dart`: Pull จริง + Push จริง + `markOrderSynced` (รวม `payment_method` และถ้าต้องการ `cash_amount` / `transfer_amount` / `change_amount`)  
+- [ ] (ถ้าต้องการ) Push ยกเลิกบิลหลัง `voidRecordedSale`  
 - [ ] `auth_provider.dart`: login จริง + เก็บ token  
 - [ ] (ถ้าต้องการ) `sales_history_repository.dart`: ส่งสำเนาบิลขึ้น server  
 - [ ] (ถ้าต้องการ) โหลด `SellerProfile` จาก API แทน mock  

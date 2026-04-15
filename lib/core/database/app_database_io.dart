@@ -24,7 +24,7 @@ class AppDatabase {
     final path = p.join(dir.path, 'phongchai_pos.db');
     _db = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute(DatabaseSchema.createTableProducts);
         await db.execute(DatabaseSchema.indexProductsBarcode);
@@ -39,9 +39,13 @@ class AppDatabase {
         if (oldVersion < 2) {
           await _ensureOrdersPointsRedeemedColumn(db);
         }
+        if (oldVersion < 3) {
+          await _ensureOrdersVoidColumns(db);
+        }
       },
     );
     await _ensureOrdersPointsRedeemedColumn(_db!);
+    await _ensureOrdersVoidColumns(_db!);
     await _db!.execute('PRAGMA foreign_keys = ON');
   }
 
@@ -53,6 +57,26 @@ class AppDatabase {
       await db.execute(
         'ALTER TABLE orders ADD COLUMN points_redeemed INTEGER NOT NULL DEFAULT 0',
       );
+    }
+  }
+
+  static Future<void> _ensureOrdersVoidColumns(Database db) async {
+    final rows = await db.rawQuery('PRAGMA table_info(orders)');
+    bool has(String name) =>
+        rows.any((r) => (r['name'] as String?) == name);
+    if (!has('is_voided')) {
+      await db.execute(
+        'ALTER TABLE orders ADD COLUMN is_voided INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+    if (!has('void_reason')) {
+      await db.execute('ALTER TABLE orders ADD COLUMN void_reason TEXT');
+    }
+    if (!has('voided_at_ms')) {
+      await db.execute('ALTER TABLE orders ADD COLUMN voided_at_ms INTEGER');
+    }
+    if (!has('voided_by_label')) {
+      await db.execute('ALTER TABLE orders ADD COLUMN voided_by_label TEXT');
     }
   }
 
@@ -103,28 +127,20 @@ class AppDatabase {
         'created_at': createdAtMs,
         'is_synced': 0,
         'points_redeemed': pointsRedeemed,
+        'is_voided': 0,
       });
 
       for (final line in lines) {
-        await txn.insert(
-          'products',
-          {
-            'id': line.productId,
-            'barcode': line.barcode,
-            'name': line.name,
-            'price': line.price,
-            'stock_qty': 0,
-            'updated_at': createdAtMs,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-
         await txn.insert('order_items', {
           'order_id': orderId,
           'product_id': line.productId,
           'qty': line.qty,
           'price': line.price,
         });
+        await txn.rawUpdate(
+          'UPDATE products SET stock_qty = stock_qty - ? WHERE id = ?',
+          [line.qty, line.productId],
+        );
       }
       return orderId;
     });
@@ -188,5 +204,62 @@ class AppDatabase {
       where: 'order_id = ?',
       whereArgs: [orderId],
     );
+  }
+
+  Future<Map<String, Object?>?> getOrderByInvoiceNo(String invoiceNo) async {
+    final db = await database;
+    final rows = await db.query(
+      'orders',
+      where: 'invoice_no = ?',
+      whereArgs: [invoiceNo],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  /// ยกเลิกบิลที่ยังไม่ void — คืนสต็อกใน `products` แล้วตั้งค่า `is_voided`
+  Future<bool> voidOrderByInvoiceNo({
+    required String invoiceNo,
+    required String reason,
+    required String voidedByLabel,
+    required int voidedAtMs,
+  }) async {
+    final db = await database;
+    return db.transaction<bool>((txn) async {
+      final rows = await txn.query(
+        'orders',
+        where: 'invoice_no = ? AND COALESCE(is_voided, 0) = 0',
+        whereArgs: [invoiceNo],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+      final orderId = rows.first['id'] as int;
+      final items = await txn.query(
+        'order_items',
+        where: 'order_id = ?',
+        whereArgs: [orderId],
+      );
+      for (final row in items) {
+        final productId = row['product_id'] as String;
+        final qty = (row['qty'] as num).toDouble();
+        await txn.rawUpdate(
+          'UPDATE products SET stock_qty = stock_qty + ? WHERE id = ?',
+          [qty, productId],
+        );
+      }
+      final n = await txn.update(
+        'orders',
+        {
+          'is_voided': 1,
+          'void_reason': reason,
+          'voided_at_ms': voidedAtMs,
+          'voided_by_label': voidedByLabel,
+        },
+        where: 'id = ?',
+        whereArgs: [orderId],
+      );
+      return n > 0;
+    });
   }
 }

@@ -9,6 +9,8 @@ import 'package:phongchai_pos/features/pos/domain/sale_record.dart';
 import 'package:phongchai_pos/features/pos/domain/tax_invoice_buyer_info.dart';
 import 'package:phongchai_pos/features/pos/presentation/checkout_dialog.dart';
 import 'package:phongchai_pos/features/pos/presentation/tax_invoice_form_dialog.dart';
+import 'package:phongchai_pos/features/auth/providers/auth_provider.dart';
+import 'package:phongchai_pos/features/inventory/providers/inventory_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/sales_history_provider.dart';
 
 DateTime _startOfDay(DateTime d) =>
@@ -100,6 +102,62 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
     });
   }
 
+  Future<void> _voidSelectedSale(SaleRecord sale) async {
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final controller = TextEditingController();
+        return AlertDialog(
+          title: const Text('ยกเลิกบิล (void)'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              hintText: 'ระบุเหตุผล',
+              border: OutlineInputBorder(),
+            ),
+            maxLines: 3,
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('ปิด'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final t = controller.text.trim();
+                if (t.isEmpty) return;
+                Navigator.pop(ctx, t);
+              },
+              child: const Text('ยืนยัน'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || reason == null || reason.trim().isEmpty) return;
+    final emp = ref.read(authProvider);
+    final by = emp?.name ?? '—';
+    final ok = await ref.read(salesHistoryProvider.notifier).voidSale(
+          sale: sale,
+          reason: reason.trim(),
+          voidedByLabel: by,
+        );
+    if (!mounted) return;
+    if (ok) {
+      ref.invalidate(inventoryProvider);
+      Navigator.of(context).pop();
+      setState(() => _selectedSale = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ยกเลิกบิลเรียบร้อย')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ยกเลิกบิลไม่สำเร็จ')),
+      );
+    }
+  }
+
   Future<void> _issueBackdatedInvoice(SaleRecord sale) async {
     final buyer = await showTaxInvoiceFormDialogEphemeral(
       context,
@@ -162,6 +220,9 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
                 Navigator.of(context).pop();
                 _issueBackdatedInvoice(s);
               },
+              onVoidSale: _selectedSale!.isVoided
+                  ? null
+                  : () => _voidSelectedSale(_selectedSale!),
             ),
       backgroundColor: theme.colorScheme.surfaceContainerLowest,
       appBar: AppBar(
@@ -287,10 +348,9 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
                   );
                 }
 
-                final totalInRange = inRange.fold<double>(
-                  0,
-                  (sum, s) => sum + s.grandTotal,
-                );
+                final totalInRange = inRange
+                    .where((s) => !s.isVoided)
+                    .fold<double>(0, (sum, s) => sum + s.grandTotal);
 
                 return Column(
                   children: [
@@ -356,7 +416,7 @@ class _BottomSalesSummary extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'รวมยอดขายในช่วงวันที่เลือก (ตามตัวกรอง)',
+                  'รวมยอดขายในช่วงวันที่เลือก (ไม่รวมบิลที่ยกเลิก)',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -395,8 +455,11 @@ class _SaleHistoryCard extends StatelessWidget {
     final theme = Theme.of(context);
     final hasTax = sale.taxInvoiceBuyer?.hasAnyInput == true;
     final itemCount = sale.lines.length;
+    final voided = sale.isVoided;
 
-    return Card(
+    return Opacity(
+      opacity: voided ? 0.58 : 1,
+      child: Card(
       elevation: 2,
       shadowColor: Colors.black.withValues(alpha: 0.08),
       surfaceTintColor: Colors.transparent,
@@ -462,6 +525,19 @@ class _SaleHistoryCard extends StatelessWidget {
                         children: [
                           _PaymentMethodBadge(method: sale.method),
                           _ItemCountBadge(count: itemCount),
+                          if (voided)
+                            Chip(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              label: const Text('ยกเลิกแล้ว'),
+                              backgroundColor: theme.colorScheme.errorContainer
+                                  .withValues(alpha: 0.6),
+                              side: BorderSide.none,
+                              labelStyle: theme.textTheme.labelSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: theme.colorScheme.onErrorContainer,
+                              ),
+                            ),
                           if (hasTax)
                             Chip(
                               visualDensity: VisualDensity.compact,
@@ -516,6 +592,7 @@ class _SaleHistoryCard extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -564,6 +641,7 @@ class _SaleDetailDrawer extends StatelessWidget {
     required this.moneyFmt,
     required this.dateFmt,
     required this.onIssueInvoice,
+    this.onVoidSale,
   });
 
   final SaleRecord sale;
@@ -571,12 +649,16 @@ class _SaleDetailDrawer extends StatelessWidget {
   final DateFormat dateFmt;
   final VoidCallback onIssueInvoice;
 
+  /// ยกเลิกบิล (void) — null ถ้าเป็นบิลที่ยกเลิกแล้ว
+  final VoidCallback? onVoidSale;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final w = MediaQuery.sizeOf(context).width;
     final drawerWidth = w < 500 ? w * 0.92 : 400.0;
     final hasTax = sale.taxInvoiceBuyer?.hasAnyInput == true;
+    final voided = sale.isVoided;
 
     return Drawer(
       width: drawerWidth,
@@ -622,6 +704,48 @@ class _SaleDetailDrawer extends StatelessWidget {
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
+                  if (voided) ...[
+                    const SizedBox(height: 12),
+                    Material(
+                      color: theme.colorScheme.errorContainer
+                          .withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'บิลนี้ถูกยกเลิกแล้ว',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: theme.colorScheme.onErrorContainer,
+                              ),
+                            ),
+                            if (sale.voidReason != null &&
+                                sale.voidReason!.trim().isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                sale.voidReason!,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onErrorContainer,
+                                ),
+                              ),
+                            ],
+                            if (sale.voidedAt != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                dateFmt.format(sale.voidedAt!.toLocal()),
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onErrorContainer,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   Wrap(
                     spacing: 8,
@@ -685,20 +809,43 @@ class _SaleDetailDrawer extends StatelessWidget {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: OutlinedButton.icon(
-                onPressed: onIssueInvoice,
-                icon: const Icon(Icons.receipt_long_outlined, size: 17),
-                label: const Text(
-                  'ออกใบกำกับภาษีเต็มรูปแบบ',
-                  style: TextStyle(fontSize: 13),
-                ),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (onVoidSale != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: OutlinedButton.icon(
+                        onPressed: onVoidSale,
+                        icon: const Icon(Icons.cancel_outlined, size: 18),
+                        label: const Text('ยกเลิกบิล (void)'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: theme.colorScheme.error,
+                          side: BorderSide(color: theme.colorScheme.error),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ),
+                  OutlinedButton.icon(
+                    onPressed: onIssueInvoice,
+                    icon: const Icon(Icons.receipt_long_outlined, size: 17),
+                    label: const Text(
+                      'ออกใบกำกับภาษีเต็มรูปแบบ',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
                   ),
-                  visualDensity: VisualDensity.compact,
-                ),
+                ],
               ),
             ),
           ],

@@ -26,6 +26,9 @@ class SaleRecord {
     this.taxInvoiceBuyer,
     this.pointsRedeemed = 0,
     this.pointsDiscountAmount = 0,
+    this.isVoided = false,
+    this.voidReason,
+    this.voidedAt,
   });
 
   final String id;
@@ -64,6 +67,44 @@ class SaleRecord {
   /// ส่วนลดจากแต้ม (บาท)
   final double pointsDiscountAmount;
 
+  /// บิลถูกยกเลิก (void) หลังชำระแล้ว
+  final bool isVoided;
+
+  final String? voidReason;
+  final DateTime? voidedAt;
+
+  SaleRecord copyWith({
+    bool? isVoided,
+    String? voidReason,
+    DateTime? voidedAt,
+  }) {
+    return SaleRecord(
+      id: id,
+      soldAt: soldAt,
+      invoiceNo: invoiceNo,
+      lines: lines,
+      subtotal: subtotal,
+      discountAmount: discountAmount,
+      netBeforeVat: netBeforeVat,
+      vatAmount: vatAmount,
+      vatEnabled: vatEnabled,
+      grandTotal: grandTotal,
+      method: method,
+      cashAmount: cashAmount,
+      transferAmount: transferAmount,
+      cashReceived: cashReceived,
+      change: change,
+      memberName: memberName,
+      memberPhone: memberPhone,
+      taxInvoiceBuyer: taxInvoiceBuyer,
+      pointsRedeemed: pointsRedeemed,
+      pointsDiscountAmount: pointsDiscountAmount,
+      isVoided: isVoided ?? this.isVoided,
+      voidReason: voidReason ?? this.voidReason,
+      voidedAt: voidedAt ?? this.voidedAt,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'sold_at': soldAt.toIso8601String(),
@@ -86,6 +127,9 @@ class SaleRecord {
           'tax_invoice_buyer': taxInvoiceBuyer!.toJson(),
         'points_redeemed': pointsRedeemed,
         'points_discount_amount': pointsDiscountAmount,
+        'is_voided': isVoided,
+        if (voidReason != null) 'void_reason': voidReason,
+        if (voidedAt != null) 'voided_at': voidedAt!.toIso8601String(),
       };
 
   factory SaleRecord.fromJson(Map<String, dynamic> json) {
@@ -119,6 +163,11 @@ class SaleRecord {
       pointsRedeemed: (json['points_redeemed'] as num?)?.toInt() ?? 0,
       pointsDiscountAmount:
           (json['points_discount_amount'] as num?)?.toDouble() ?? 0,
+      isVoided: json['is_voided'] as bool? ?? false,
+      voidReason: json['void_reason'] as String?,
+      voidedAt: json['voided_at'] != null
+          ? DateTime.parse(json['voided_at'] as String)
+          : null,
     );
   }
 
