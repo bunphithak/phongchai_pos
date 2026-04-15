@@ -99,8 +99,8 @@ class _MemberRegisterDialogBodyState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('สมัครสมาชิก'),
-      content: SingleChildScrollView(
+        title: const Text('สมัครสมาชิก'),
+        content: SingleChildScrollView(
         child: SizedBox(
           width: 380,
           child: Column(
@@ -161,22 +161,22 @@ class _MemberRegisterDialogBodyState
           ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(),
-          child: const Text('ยกเลิก'),
-        ),
-        FilledButton(
-          onPressed: _saving ? null : _save,
-          child: _saving
-              ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('บันทึก'),
-        ),
-      ],
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.of(context).pop(),
+            child: const Text('ยกเลิก'),
+          ),
+          FilledButton(
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('บันทึก'),
+          ),
+        ],
     );
   }
 }

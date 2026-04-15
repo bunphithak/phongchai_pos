@@ -12,6 +12,36 @@ import 'package:printing/printing.dart';
 
 import 'thai_baht_words.dart';
 
+/// บรรทัดสรุปการชำระ (ใบกำกับ + ใบเสร็จความร้อน)
+String taxInvoicePaymentLine(TaxInvoiceData data, NumberFormat moneyFmt) {
+  final methodLabel = switch (data.method) {
+    PosPaymentMethod.cash => 'เงินสด',
+    PosPaymentMethod.transfer => 'โอนเงิน',
+    PosPaymentMethod.mixed => 'เงินสด + โอนเงิน',
+  };
+  final parts = <String>['การชำระเงิน: $methodLabel'];
+  if (data.method == PosPaymentMethod.mixed) {
+    if (data.cashAmount > 1e-9) {
+      parts.add('เงินสด ${moneyFmt.format(data.cashAmount)}');
+    }
+    if (data.transferAmount > 1e-9) {
+      parts.add('โอน ${moneyFmt.format(data.transferAmount)}');
+    }
+  } else if (data.method == PosPaymentMethod.cash) {
+    if (data.cashAmount > 1e-9) {
+      parts.add('รับเงิน ${moneyFmt.format(data.cashAmount)}');
+    }
+  } else {
+    if (data.transferAmount > 1e-9) {
+      parts.add('ยอดโอน ${moneyFmt.format(data.transferAmount)}');
+    }
+  }
+  if (data.change > 1e-9) {
+    parts.add('เงินทอน ${moneyFmt.format(data.change)}');
+  }
+  return parts.join(' | ');
+}
+
 /// ข้อมูลสำหรับออกใบกำกับภาษี (เก็บก่อนล้างตะกร้า)
 class TaxInvoiceData {
   const TaxInvoiceData({
@@ -28,6 +58,8 @@ class TaxInvoiceData {
     required this.vatEnabled,
     required this.grandTotal,
     required this.method,
+    this.cashAmount = 0,
+    this.transferAmount = 0,
     this.cashReceived,
     required this.change,
     this.isBackdated = false,
@@ -50,6 +82,13 @@ class TaxInvoiceData {
   final double grandTotal;
 
   final PosPaymentMethod method;
+
+  /// ยอดแบ่งจ่ายเงินสด (รายงาน / แยกประเภท)
+  final double cashAmount;
+
+  /// ยอดแบ่งจ่ายโอน
+  final double transferAmount;
+
   final double? cashReceived;
   final double change;
 
@@ -267,8 +306,7 @@ Future<Uint8List> buildTaxInvoicePdf(TaxInvoiceData data) async {
         ),
         pw.SizedBox(height: 12),
         pw.Text(
-          'การชำระเงิน: ${data.method == PosPaymentMethod.cash ? 'เงินสด' : 'โอนเงิน'}'
-          '${data.method == PosPaymentMethod.cash && data.cashReceived != null ? ' | รับเงิน ${moneyFmt.format(data.cashReceived!)} | เงินทอน ${moneyFmt.format(data.change)}' : ''}',
+          taxInvoicePaymentLine(data, moneyFmt),
           style: t(),
         ),
         pw.SizedBox(height: 28),

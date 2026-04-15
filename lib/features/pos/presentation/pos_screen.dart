@@ -19,12 +19,12 @@ import 'package:phongchai_pos/features/pos/domain/cart_item.dart';
 import 'package:phongchai_pos/features/pos/presentation/checkout_dialog.dart';
 import 'package:phongchai_pos/features/pos/domain/sale_record.dart';
 import 'package:phongchai_pos/features/pos/presentation/order_history_screen.dart';
+import 'package:phongchai_pos/features/pos/presentation/product_search_dialog.dart';
 import 'package:phongchai_pos/features/pos/presentation/tax_invoice_form_dialog.dart';
 import 'package:phongchai_pos/features/pos/providers/cart_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/pos_session_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/sales_history_provider.dart';
 import 'package:phongchai_pos/features/pos/providers/tax_invoice_buyer_provider.dart';
-
 /// สีธีม POS — โทน slate / navy อ่านสบายตา
 const _kHeaderNavy = Color(0xFF1E293B);
 
@@ -32,6 +32,34 @@ const _kHeaderNavy = Color(0xFF1E293B);
 const _kAppBarDark = Color(0xFF121212);
 const _kScaffoldBg = Color(0xFFF1F5F9);
 const _kSummaryBorder = Color(0xFFE2E8F0);
+
+/// ช่องกรอกแบบพรีเมียม: พื้นเทาอ่อน มุม 12px ไม่มีขอบจนกว่าจะโฟกัส
+const _kPremiumInputFill = Color(0xFFF5F5F5);
+const double _kPremiumInputRadius = 12;
+
+/// ปุ่มชำระเงิน — gradient เขียวเข้ม → เขียวสว่างเล็กน้อย
+const _kCheckoutBtnGradientStart = Color(0xFF0F5F2E);
+const _kCheckoutBtnGradientEnd = Color(0xFF22C55E);
+const _kCheckoutBtnGradientHoverStart = Color(0xFF15803D);
+const _kCheckoutBtnGradientHoverEnd = Color(0xFF34D399);
+
+InputDecoration _posPremiumInputDecoration(ColorScheme colorScheme) {
+  final none = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(_kPremiumInputRadius),
+    borderSide: BorderSide.none,
+  );
+  return InputDecoration(
+    filled: true,
+    fillColor: _kPremiumInputFill,
+    border: none,
+    enabledBorder: none,
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(_kPremiumInputRadius),
+      borderSide: BorderSide(color: colorScheme.primary, width: 2),
+    ),
+  );
+}
+
 final NumberFormat _kMoneyFmt = NumberFormat('#,##0.00', 'en_US');
 
 /// ยอดรวมสุทธิ — สีน้ำเงินเข้มให้เด่น
@@ -117,11 +145,13 @@ class _PosAppBarHeader extends StatefulWidget {
     required this.onOpenMemberPicker,
     required this.onOpenHistory,
     required this.onOpenTaxInvoiceForm,
+    required this.onOpenProductSearch,
   });
 
   final VoidCallback onOpenMemberPicker;
   final VoidCallback onOpenHistory;
   final VoidCallback onOpenTaxInvoiceForm;
+  final VoidCallback onOpenProductSearch;
 
   @override
   State<_PosAppBarHeader> createState() => _PosAppBarHeaderState();
@@ -201,18 +231,23 @@ class _PosAppBarHeaderState extends State<_PosAppBarHeader> {
                     tooltip: 'สมาชิก(F1)',
                     onPressed: widget.onOpenMemberPicker,
                   ),
-                  const SizedBox(width: 8),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 16),
                   _posNavIconButton(
                     icon: Icons.receipt_long_outlined,
                     tooltip: 'ประวัติการขาย',
                     onPressed: widget.onOpenHistory,
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 16),
                   _posNavIconButton(
                     icon: Icons.edit_document,
                     tooltip: 'ใบกำกับภาษี',
                     onPressed: widget.onOpenTaxInvoiceForm,
+                  ),
+                  const SizedBox(width: 16),
+                  _posNavIconButton(
+                    icon: Icons.manage_search_rounded,
+                    tooltip: 'ค้นหาสินค้า(F2)',
+                    onPressed: widget.onOpenProductSearch,
                   ),
                 ],
               ),
@@ -520,6 +555,8 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       vatEnabled: vatEnabled,
       grandTotal: total,
       method: result.method,
+      cashAmount: result.cashAmount,
+      transferAmount: result.transferAmount,
       cashReceived: result.cashReceived,
       change: result.change,
     );
@@ -539,6 +576,8 @@ class _POSScreenState extends ConsumerState<POSScreen> {
             vatEnabled: vatEnabled,
             grandTotal: total,
             method: result.method,
+            cashAmount: result.cashAmount,
+            transferAmount: result.transferAmount,
             cashReceived: result.cashReceived,
             change: result.change,
             memberName: member.billMember?.name,
@@ -585,9 +624,11 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
-        final methodLabel = result.method == PosPaymentMethod.cash
-            ? 'เงินสด'
-            : 'โอนเงิน';
+        final methodLabel = switch (result.method) {
+          PosPaymentMethod.cash => 'เงินสด',
+          PosPaymentMethod.transfer => 'โอนเงิน',
+          PosPaymentMethod.mixed => 'เงินสด + โอนเงิน',
+        };
         return AlertDialog(
           title: const Text('ชำระเงินสำเร็จ'),
           content: Column(
@@ -595,7 +636,15 @@ class _POSScreenState extends ConsumerState<POSScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('วิธีชำระ: $methodLabel'),
-              if (result.method == PosPaymentMethod.cash) ...[
+              if (result.cashAmount > 1e-9) ...[
+                const SizedBox(height: 6),
+                Text('เงินสด: ฿${_kMoneyFmt.format(result.cashAmount)}'),
+              ],
+              if (result.transferAmount > 1e-9) ...[
+                const SizedBox(height: 6),
+                Text('โอน: ฿${_kMoneyFmt.format(result.transferAmount)}'),
+              ],
+              if (result.change > 1e-9) ...[
                 const SizedBox(height: 6),
                 Text('เงินทอน: ฿${_kMoneyFmt.format(result.change)}'),
               ],
@@ -792,65 +841,65 @@ class _POSScreenState extends ConsumerState<POSScreen> {
         return StatefulBuilder(
           builder: (ctx, setLocalState) {
             return AlertDialog(
-              title: const Text('ค้นหาสมาชิก'),
-              content: SizedBox(
-                width: 520,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: queryController,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        hintText: 'ค้นหาจากชื่อหรือเบอร์โทร',
-                        prefixIcon: Icon(Icons.search),
-                        border: OutlineInputBorder(),
+                title: const Text('ค้นหาสมาชิก'),
+                content: SizedBox(
+                  width: 520,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: queryController,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          hintText: 'ค้นหาจากชื่อหรือเบอร์โทร',
+                          prefixIcon: Icon(Icons.search),
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (v) {
+                          final q = v.trim().toLowerCase();
+                          setLocalState(() {
+                            if (q.isEmpty) {
+                              filtered = all;
+                            } else {
+                              filtered = all.where((e) {
+                                return e.phone.contains(q) ||
+                                    e.name.toLowerCase().contains(q);
+                              }).toList();
+                            }
+                          });
+                        },
                       ),
-                      onChanged: (v) {
-                        final q = v.trim().toLowerCase();
-                        setLocalState(() {
-                          if (q.isEmpty) {
-                            filtered = all;
-                          } else {
-                            filtered = all.where((e) {
-                              return e.phone.contains(q) ||
-                                  e.name.toLowerCase().contains(q);
-                            }).toList();
-                          }
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Flexible(
-                      child: filtered.isEmpty
-                          ? const Center(child: Text('ไม่พบสมาชิก'))
-                          : ListView.separated(
-                              shrinkWrap: true,
-                              itemCount: filtered.length,
-                              separatorBuilder: (context, index) =>
-                                  const Divider(height: 1),
-                              itemBuilder: (ctx, i) {
-                                final m = filtered[i];
-                                return ListTile(
-                                  dense: true,
-                                  title: Text(m.name),
-                                  subtitle: Text(
-                                    '${m.phone} • แต้ม ${_formatLoyaltyPoints(m.loyaltyPoints)}',
-                                  ),
-                                  onTap: () => Navigator.of(ctx).pop(m),
-                                );
-                              },
-                            ),
-                    ),
-                  ],
+                      const SizedBox(height: 12),
+                      Flexible(
+                        child: filtered.isEmpty
+                            ? const Center(child: Text('ไม่พบสมาชิก'))
+                            : ListView.separated(
+                                shrinkWrap: true,
+                                itemCount: filtered.length,
+                                separatorBuilder: (context, index) =>
+                                    const Divider(height: 1),
+                                itemBuilder: (ctx, i) {
+                                  final m = filtered[i];
+                                  return ListTile(
+                                    dense: true,
+                                    title: Text(m.name),
+                                    subtitle: Text(
+                                      '${m.phone} • แต้ม ${_formatLoyaltyPoints(m.loyaltyPoints)}',
+                                    ),
+                                    onTap: () => Navigator.of(ctx).pop(m),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: const Text('ปิด'),
-                ),
-              ],
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('ปิด'),
+                  ),
+                ],
             );
           },
         );
@@ -867,9 +916,19 @@ class _POSScreenState extends ConsumerState<POSScreen> {
           duration: const Duration(seconds: 2),
         ),
       );
+      _refocusBarcode();
       return;
     }
     _refocusBarcode();
+  }
+
+  Future<void> _openOrderHistory() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const OrderHistoryScreen(),
+      ),
+    );
+    if (mounted) _refocusBarcode();
   }
 
   Future<void> _showEditQuantityDialog(int index, CartItem item) async {
@@ -931,6 +990,19 @@ class _POSScreenState extends ConsumerState<POSScreen> {
     });
   }
 
+  Future<void> _openProductSearchDialog() async {
+    await showProductSearchDialog(
+      context,
+      onAddToCart: (product, quantity) {
+        ref.read(cartProvider.notifier).addOrMergeProductQuantity(
+              product,
+              quantity,
+            );
+      },
+    );
+    if (mounted) _refocusBarcode();
+  }
+
   @override
   Widget build(BuildContext context) {
     final employee = ref.watch(authProvider);
@@ -954,6 +1026,9 @@ class _POSScreenState extends ConsumerState<POSScreen> {
         const SingleActivator(LogicalKeyboardKey.f1): () {
           if (mounted) unawaited(_openMemberPickerModal());
         },
+        const SingleActivator(LogicalKeyboardKey.f2): () {
+          if (mounted) unawaited(_openProductSearchDialog());
+        },
         const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
@@ -972,7 +1047,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
       child: Scaffold(
         backgroundColor: _kScaffoldBg,
         appBar: AppBar(
-          toolbarHeight: 104,
+          toolbarHeight: 124,
           centerTitle: false,
           titleSpacing: 0,
           title: Padding(
@@ -980,13 +1055,8 @@ class _POSScreenState extends ConsumerState<POSScreen> {
             child: _PosAppBarHeader(
               onOpenMemberPicker: () => unawaited(_openMemberPickerModal()),
               onOpenTaxInvoiceForm: _openTaxInvoiceForm,
-              onOpenHistory: () {
-                Navigator.of(context).push<void>(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const OrderHistoryScreen(),
-                  ),
-                );
-              },
+              onOpenProductSearch: () => unawaited(_openProductSearchDialog()),
+              onOpenHistory: () => unawaited(_openOrderHistory()),
             ),
           ),
           elevation: 0,
@@ -1041,6 +1111,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
                       hasHeldBill: ref.watch(heldBillProvider) != null,
                       onEditLineQuantity: _showEditQuantityDialog,
                       onRequestClearCart: _onRequestClearCart,
+                      onRefocusBarcode: _refocusBarcode,
                     ),
                   ),
                   Expanded(
@@ -1074,6 +1145,7 @@ class _POSScreenState extends ConsumerState<POSScreen> {
                     hasHeldBill: ref.watch(heldBillProvider) != null,
                     onEditLineQuantity: _showEditQuantityDialog,
                     onRequestClearCart: _onRequestClearCart,
+                    onRefocusBarcode: _refocusBarcode,
                   ),
                 ),
                 Flexible(
@@ -1115,6 +1187,7 @@ class _CartPanel extends ConsumerWidget {
     required this.hasHeldBill,
     required this.onEditLineQuantity,
     required this.onRequestClearCart,
+    required this.onRefocusBarcode,
   });
 
   final VoidCallback onHoldBill;
@@ -1122,6 +1195,7 @@ class _CartPanel extends ConsumerWidget {
   final bool hasHeldBill;
   final Future<void> Function(int index, CartItem item) onEditLineQuantity;
   final Future<void> Function() onRequestClearCart;
+  final VoidCallback onRefocusBarcode;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1219,7 +1293,7 @@ class _CartPanel extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  '${cart.length} รายการ',
+                  '${cartRows.length} รายการ',
                   style: theme.textTheme.labelLarge?.copyWith(
                     color: colorScheme.onPrimaryContainer,
                     fontWeight: FontWeight.w600,
@@ -1289,6 +1363,7 @@ class _CartPanel extends ConsumerWidget {
                                     item: row.item,
                                     displayPart: row.part,
                                     allowEdit: row.allowEdit,
+                                    onRefocusBarcode: onRefocusBarcode,
                                     onOpenQuantityDialog: () =>
                                         onEditLineQuantity(
                                           row.sourceIndex,
@@ -1403,6 +1478,7 @@ class _CartLineTile extends ConsumerStatefulWidget {
     required this.item,
     this.displayPart,
     this.allowEdit = true,
+    required this.onRefocusBarcode,
     required this.onOpenQuantityDialog,
   });
 
@@ -1410,6 +1486,7 @@ class _CartLineTile extends ConsumerStatefulWidget {
   final CartItem item;
   final ProductUnitBreakdown? displayPart;
   final bool allowEdit;
+  final VoidCallback onRefocusBarcode;
   final VoidCallback onOpenQuantityDialog;
 
   @override
@@ -1454,51 +1531,55 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
   }
 
   void _commitQuantity() {
-    final raw = _qtyController.text.trim();
-    final notifier = ref.read(cartProvider.notifier);
-    final idx = widget.index;
-    final part = widget.displayPart;
-    final currentQty = widget.item.quantity;
+    try {
+      final raw = _qtyController.text.trim();
+      final notifier = ref.read(cartProvider.notifier);
+      final idx = widget.index;
+      final part = widget.displayPart;
+      final currentQty = widget.item.quantity;
 
-    if (raw.isEmpty) {
-      _qtyController.text = '$_displayedUnitQty';
-      return;
-    }
+      if (raw.isEmpty) {
+        _qtyController.text = '$_displayedUnitQty';
+        return;
+      }
 
-    final parsed = int.tryParse(raw);
-    if (parsed == null) {
-      _qtyController.text = '$_displayedUnitQty';
-      return;
-    }
+      final parsed = int.tryParse(raw);
+      if (parsed == null) {
+        _qtyController.text = '$_displayedUnitQty';
+        return;
+      }
 
-    if (parsed <= 0) {
+      if (parsed <= 0) {
+        if (part == null) {
+          notifier.removeAt(idx);
+        } else {
+          final next = currentQty - part.baseQty;
+          if (next <= 0) {
+            notifier.removeAt(idx);
+          } else {
+            notifier.setQuantityAt(idx, next);
+          }
+        }
+        return;
+      }
+
       if (part == null) {
-        notifier.removeAt(idx);
+        notifier.setQuantityAt(idx, parsed);
       } else {
-        final next = currentQty - part.baseQty;
+        final desiredBaseQty = parsed * _stepQty;
+        final delta = desiredBaseQty - part.baseQty;
+        final next = currentQty + delta;
         if (next <= 0) {
           notifier.removeAt(idx);
         } else {
           notifier.setQuantityAt(idx, next);
         }
       }
-      return;
-    }
-
-    if (part == null) {
-      notifier.setQuantityAt(idx, parsed);
-    } else {
-      final desiredBaseQty = parsed * _stepQty;
-      final delta = desiredBaseQty - part.baseQty;
-      final next = currentQty + delta;
-      if (next <= 0) {
-        notifier.removeAt(idx);
-      } else {
-        notifier.setQuantityAt(idx, next);
+      if (mounted) {
+        _qtyController.text = '$parsed';
       }
-    }
-    if (mounted) {
-      _qtyController.text = '$parsed';
+    } finally {
+      widget.onRefocusBarcode();
     }
   }
 
@@ -1604,14 +1685,15 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
                         final notifier = ref.read(cartProvider.notifier);
                         if (widget.displayPart == null) {
                           notifier.decrementAt(index);
-                          return;
-                        }
-                        final next = widget.item.quantity - _stepQty;
-                        if (next <= 0) {
-                          notifier.removeAt(index);
                         } else {
-                          notifier.setQuantityAt(index, next);
+                          final next = widget.item.quantity - _stepQty;
+                          if (next <= 0) {
+                            notifier.removeAt(index);
+                          } else {
+                            notifier.setQuantityAt(index, next);
+                          }
                         }
+                        widget.onRefocusBarcode();
                       },
                     ),
                     SizedBox(
@@ -1655,12 +1737,13 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
                         final notifier = ref.read(cartProvider.notifier);
                         if (widget.displayPart == null) {
                           notifier.incrementAt(index);
-                          return;
+                        } else {
+                          notifier.setQuantityAt(
+                            index,
+                            widget.item.quantity + _stepQty,
+                          );
                         }
-                        notifier.setQuantityAt(
-                          index,
-                          widget.item.quantity + _stepQty,
-                        );
+                        widget.onRefocusBarcode();
                       },
                     ),
                     SizedBox(
@@ -1690,8 +1773,51 @@ class _CartLineTileState extends ConsumerState<_CartLineTile> {
                         minHeight: 26,
                       ),
                       tooltip: 'ลบรายการนี้',
-                      onPressed: () {
-                        ref.read(cartProvider.notifier).removeAt(index);
+                      onPressed: () async {
+                        final part = widget.displayPart;
+                        final nameLine = part == null
+                            ? product.name
+                            : '${product.name} (${part.unitCount} ${part.unit})';
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('ลบรายการนี้?'),
+                            content: Text(
+                              'ต้องการลบ "$nameLine" ออกจากตะกร้าหรือไม่',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(ctx, false),
+                                child: const Text('ยกเลิก'),
+                              ),
+                              FilledButton(
+                                autofocus: true,
+                                onPressed: () =>
+                                    Navigator.pop(ctx, true),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: colorScheme.error,
+                                  foregroundColor: colorScheme.onError,
+                                ),
+                                child: const Text('ลบ'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (!mounted) return;
+                        widget.onRefocusBarcode();
+                        if (ok != true) return;
+                        final notifier = ref.read(cartProvider.notifier);
+                        if (part == null) {
+                          notifier.removeAt(index);
+                          return;
+                        }
+                        final next = widget.item.quantity - part.baseQty;
+                        if (next <= 0) {
+                          notifier.removeAt(index);
+                        } else {
+                          notifier.setQuantityAt(index, next);
+                        }
                       },
                     ),
                   ],
@@ -1902,12 +2028,11 @@ class _SummaryPanel extends ConsumerWidget {
               textInputAction: TextInputAction.done,
               textAlign: TextAlign.center,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: InputDecoration(
+              decoration: _posPremiumInputDecoration(colorScheme).copyWith(
                 labelText: 'จำนวน',
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 14,
                 ),
               ),
               onSubmitted: onScanQtySubmitted,
@@ -1926,7 +2051,7 @@ class _SummaryPanel extends ConsumerWidget {
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.5,
               ),
-              decoration: InputDecoration(
+              decoration: _posPremiumInputDecoration(colorScheme).copyWith(
                 labelText: 'สแกนบาร์โค้ด',
                 hintText: 'พิมพ์แล้วกด Enter',
                 prefixIcon: Container(
@@ -1945,29 +2070,9 @@ class _SummaryPanel extends ConsumerWidget {
                   minWidth: 52,
                   minHeight: 48,
                 ),
-                filled: true,
-                fillColor: Colors.white,
                 contentPadding: const EdgeInsets.symmetric(
                   vertical: 18,
                   horizontal: 16,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(color: colorScheme.primary, width: 2),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(
-                    color: colorScheme.primary.withValues(alpha: 0.45),
-                    width: 2,
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(
-                    color: colorScheme.primary,
-                    width: 2.5,
-                  ),
                 ),
               ),
               onSubmitted: onBarcodeSubmitted,
@@ -2047,15 +2152,16 @@ class _SummaryPanel extends ConsumerWidget {
         controller: discountController,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
-        decoration: InputDecoration(
+        decoration: _posPremiumInputDecoration(colorScheme).copyWith(
           labelText: discountState.kind == DiscountKind.baht
               ? 'จำนวนส่วนลด (บาท)'
               : 'ส่วนลด (%)',
           prefixText: discountState.kind == DiscountKind.baht ? '฿ ' : null,
           suffixText: discountState.kind == DiscountKind.percent ? '%' : null,
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 16,
+          ),
         ),
         onChanged: (s) {
           final v = double.tryParse(s.trim()) ?? 0;
@@ -2084,10 +2190,8 @@ class _SummaryPanel extends ConsumerWidget {
             '฿${_kMoneyFmt.format(grand)}',
             style: (theme.textTheme.displaySmall ?? theme.textTheme.headlineMedium)
                 ?.copyWith(
-                  // ใหญ่ขึ้น 1 เท่า (2x จากขนาดเดิม)
-                  fontSize:
-                      ((theme.textTheme.displaySmall?.fontSize ?? 36) * 2),
-                  fontWeight: FontWeight.w800,
+                  fontSize: (theme.textTheme.displaySmall?.fontSize ?? 36) * 1.2,
+                  fontWeight: FontWeight.w900,
                   color: _kNetTotalColor,
                   fontFeatures: const [FontFeature.tabularFigures()],
                   height: 1.0,
@@ -2100,23 +2204,11 @@ class _SummaryPanel extends ConsumerWidget {
       const SizedBox(height: 20),
       SizedBox(
         width: double.infinity,
-        height: 60,
-        child: FilledButton(
-          onPressed: onCheckout,
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF15803D),
-            foregroundColor: Colors.white,
-            elevation: 0,
-            minimumSize: const Size(double.infinity, 60),
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-            textStyle: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+        height: 64,
+        child: Center(
+          child: _PremiumCheckoutButton(
+            onPressed: onCheckout,
           ),
-          child: const Text('ชำระเงิน'),
         ),
       ),
       const SizedBox(height: 6),
@@ -2148,6 +2240,100 @@ class _SummaryPanel extends ConsumerWidget {
         border: Border(left: BorderSide(color: _kSummaryBorder)),
       ),
       child: content,
+    );
+  }
+}
+
+class _PremiumCheckoutButton extends StatefulWidget {
+  const _PremiumCheckoutButton({
+    required this.onPressed,
+  });
+
+  final VoidCallback onPressed;
+
+  @override
+  State<_PremiumCheckoutButton> createState() => _PremiumCheckoutButtonState();
+}
+
+class _PremiumCheckoutButtonState extends State<_PremiumCheckoutButton> {
+  bool _hover = false;
+
+  void _setHover(bool v) {
+    if (_hover != v) setState(() => _hover = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final baseTitle = theme.textTheme.titleMedium?.fontSize ?? 16;
+    final titleStyle = theme.textTheme.titleMedium?.copyWith(
+      fontSize: baseTitle * 1.08,
+      fontWeight: FontWeight.bold,
+      color: Colors.white,
+      letterSpacing: 0.2,
+    );
+
+    final gradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: _hover
+          ? const [
+              _kCheckoutBtnGradientHoverStart,
+              _kCheckoutBtnGradientHoverEnd,
+            ]
+          : const [
+              _kCheckoutBtnGradientStart,
+              _kCheckoutBtnGradientEnd,
+            ],
+    );
+
+    final shadowAlpha = _hover ? 0.48 : 0.38;
+
+    return MouseRegion(
+      onEnter: (_) => _setHover(true),
+      onExit: (_) => _setHover(false),
+      child: AnimatedScale(
+        scale: _hover ? 1.025 : 1.0,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.center,
+        child: SizedBox(
+          width: double.infinity,
+          height: 60,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: widget.onPressed,
+              borderRadius: BorderRadius.circular(14),
+              splashColor: Colors.white24,
+              highlightColor: Colors.white12,
+              hoverColor: Colors.white.withValues(alpha: 0.08),
+              child: Ink(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  gradient: gradient,
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF15803D).withValues(alpha: shadowAlpha),
+                      blurRadius: _hover ? 16 : 12,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('ชำระเงิน', style: titleStyle),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

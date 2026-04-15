@@ -172,8 +172,8 @@ class _TaxInvoiceFormDialogState extends ConsumerState<TaxInvoiceFormDialog> {
     final theme = Theme.of(context);
 
     return AlertDialog(
-      title: const Text('แบบฟอร์มข้อมูลใบกำกับภาษี'),
-      content: SizedBox(
+        title: const Text('แบบฟอร์มข้อมูลใบกำกับภาษี'),
+        content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
           child: Column(

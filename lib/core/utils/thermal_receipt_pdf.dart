@@ -5,7 +5,6 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:phongchai_pos/core/utils/pdf_generator.dart';
 import 'package:phongchai_pos/data/mock/mock_data_store.dart';
-import 'package:phongchai_pos/features/pos/presentation/checkout_dialog.dart';
 import 'package:printing/printing.dart';
 
 Future<Uint8List> buildThermalReceiptPdfBytes(TaxInvoiceData data) async {
@@ -16,8 +15,13 @@ Future<Uint8List> buildThermalReceiptPdfBytes(TaxInvoiceData data) async {
   final shortInvoiceNo = data.invoiceNo.length > 20
       ? data.invoiceNo.substring(0, 20)
       : data.invoiceNo;
+  final paymentExtra = (data.cashAmount > 1e-9 ||
+          data.transferAmount > 1e-9 ||
+          data.change > 1e-9)
+      ? 36.0
+      : 0.0;
   final estimatedHeight =
-      (230 + (data.lines.length * 24) + (data.discountAmount > 0 ? 14 : 0) + (data.cashReceived != null ? 20 : 0))
+      (230 + (data.lines.length * 24) + (data.discountAmount > 0 ? 14 : 0) + paymentExtra)
           .toDouble()
           .clamp(260.0, 900.0);
   final roll80Format = PdfPageFormat(
@@ -147,13 +151,7 @@ Future<Uint8List> buildThermalReceiptPdfBytes(TaxInvoiceData data) async {
                 ],
               ),
               pw.SizedBox(height: 2),
-              pw.Text(
-                'ชำระ: ${data.method == PosPaymentMethod.cash ? 'เงินสด' : 'โอนเงิน'}',
-              ),
-              if (data.method == PosPaymentMethod.cash && data.cashReceived != null) ...[
-                pw.Text('รับเงิน: ${money.format(data.cashReceived!)}'),
-                pw.Text('เงินทอน: ${money.format(data.change)}'),
-              ],
+              pw.Text(taxInvoicePaymentLine(data, money)),
               pw.SizedBox(height: 4),
               pw.Text('--------------------------------'),
               pw.SizedBox(height: 2),

@@ -13,6 +13,10 @@ class MockDataStore {
   static final MockDataStore instance = MockDataStore._();
 
   Map<String, Product> productsByBarcode = {};
+
+  /// สต็อกคงเหลือตามบาร์โค้ด (null = ไม่ระบุใน mock)
+  Map<String, int?> stockByBarcode = {};
+
   final Map<String, MemberLookupHit> _membersByPhone = {};
   final List<MockMemberCandidate> _memberDirectory = [];
   final Map<String, Employee> _employeesByPin = {};
@@ -63,18 +67,49 @@ class MockDataStore {
     }
   }
 
+  /// ค้นหาจากชื่อหรือบาร์โค้ด (ไม่สนตัวพิมพ์)
+  List<CatalogSearchHit> searchCatalog(String rawQuery) {
+    final q = rawQuery.trim().toLowerCase();
+    if (q.isEmpty) return [];
+    final hits = <CatalogSearchHit>[];
+    for (final e in productsByBarcode.entries) {
+      final barcode = e.key;
+      final product = e.value;
+      final name = product.name.toLowerCase();
+      if (barcode.contains(q) || name.contains(q)) {
+        hits.add(
+          CatalogSearchHit(
+            barcode: barcode,
+            product: product,
+            stockOnHand: stockByBarcode[barcode],
+          ),
+        );
+      }
+    }
+    hits.sort((a, b) => a.product.name.compareTo(b.product.name));
+    return hits;
+  }
+
   Future<void> _loadCatalog() async {
     final s = await rootBundle.loadString('assets/mock/catalog_by_barcode.json');
     final map = jsonDecode(s) as Map<String, dynamic>;
     final items = map['items'] as List<dynamic>? ?? [];
     final next = <String, Product>{};
+    final stock = <String, int?>{};
     for (final e in items) {
       final row = e as Map<String, dynamic>;
       final barcode = row['barcode'] as String;
       final product = Product.fromJson(row['product'] as Map<String, dynamic>);
       next[barcode] = product;
+      if (row.containsKey('stock_on_hand')) {
+        final v = row['stock_on_hand'];
+        stock[barcode] = v == null ? null : (v as num).toInt();
+      } else {
+        stock[barcode] = null;
+      }
     }
     productsByBarcode = next;
+    stockByBarcode = stock;
   }
 
   Future<void> _loadMembers() async {
@@ -130,6 +165,14 @@ class MockDataStore {
   }
 
   void _applyHardcodedFallback() {
+    stockByBarcode = {
+      '123': 240,
+      '456': 18,
+      '8851473011619': 42,
+      '8851552201030': 200,
+      '8851907130077': 150,
+      '8859685401792': 80,
+    };
     productsByBarcode = {
       '123': const Product(
         id: '123',
@@ -196,6 +239,21 @@ class MockDataStore {
       ..['654321'] = const Employee(name: 'นารี รักงาน', role: 'หัวหน้าแผนก');
     sellerProfile = SellerProfile.defaults;
   }
+}
+
+/// ผลลัพธ์ค้นหาในแคตตาล็อก (mock / ต่อ API)
+class CatalogSearchHit {
+  const CatalogSearchHit({
+    required this.barcode,
+    required this.product,
+    this.stockOnHand,
+  });
+
+  final String barcode;
+  final Product product;
+
+  /// null = ไม่ระบุสต็อกในระบบ
+  final int? stockOnHand;
 }
 
 class MockMemberCandidate {

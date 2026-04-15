@@ -20,16 +20,25 @@ class CartNotifier extends Notifier<List<CartItem>> {
 
   /// ถ้ามีสินค้าเดิมในตะกร้าแล้ว ให้เพิ่มจำนวนและเลื่อนแถวนั้นขึ้นบนสุด (ล่าสุดบนสุด)
   void addOrIncrementProduct(Product product) {
+    addOrMergeProductQuantity(product, 1);
+  }
+
+  /// รวมจำนวนกับแถวเดิม (ถ้ามี) แล้วเลื่อนแถวขึ้นบนสุด
+  void addOrMergeProductQuantity(Product product, int quantity) {
+    if (quantity <= 0) return;
     final idx = state.indexWhere((e) => e.product.id == product.id);
     if (idx >= 0) {
       final line = state[idx];
       final rest = [...state]..removeAt(idx);
       state = [
-        CartItem(product: line.product, quantity: line.quantity + 1),
+        CartItem(
+          product: line.product,
+          quantity: line.quantity + quantity,
+        ),
         ...rest,
       ];
     } else {
-      state = [CartItem(product: product, quantity: 1), ...state];
+      state = [CartItem(product: product, quantity: quantity), ...state];
     }
   }
 

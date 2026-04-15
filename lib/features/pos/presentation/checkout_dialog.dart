@@ -5,18 +5,29 @@ import 'package:flutter/services.dart';
 
 import 'package:phongchai_pos/features/pos/presentation/promptpay_qr_dialog.dart';
 
-enum PosPaymentMethod { cash, transfer }
+enum PosPaymentMethod { cash, transfer, mixed }
 
 class PosCheckoutResult {
   const PosCheckoutResult({
     required this.method,
+    this.cashAmount = 0,
+    this.transferAmount = 0,
     this.cashReceived,
     required this.change,
     required this.printReceipt,
   });
 
   final PosPaymentMethod method;
+
+  /// ยอดที่แบ่งเป็นช่องเงินสด (สำหรับรายงาน / backend)
+  final double cashAmount;
+
+  /// ยอดที่แบ่งเป็นช่องโอน (สำหรับ PromptPay / backend)
+  final double transferAmount;
+
+  /// ยอดรับเงินสดจริง (ใช้กับใบเสร็จ — โดยทั่วไปเท่ากับ [cashAmount])
   final double? cashReceived;
+
   final double change;
   final bool printReceipt;
 }
@@ -50,74 +61,131 @@ class _CheckoutDialogBody extends StatefulWidget {
 }
 
 class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
-  PosPaymentMethod _method = PosPaymentMethod.cash;
-  final _cashReceivedController = TextEditingController();
+  final _cashController = TextEditingController();
+  final _transferController = TextEditingController();
+  final _cashFocus = FocusNode(debugLabel: 'checkoutCash');
+  /// ไม่ให้ Tab ข้ามมาที่ช่องโอนโดยอัตโนมัติ — โฟกัสเริ่มที่เงินสดเสมอ พนักงานคลิกช่องโอนเมื่อต้องแก้เอง
+  final _transferFocus = FocusNode(debugLabel: 'checkoutTransfer', skipTraversal: true);
   bool _printReceipt = true;
+  bool _programmatic = false;
 
   @override
   void initState() {
     super.initState();
-    _cashReceivedController.addListener(() => setState(() {}));
+    _cashController.addListener(_onCashChanged);
+    _transferController.addListener(_onTransferChanged);
+    // Dialog อาจยึดโฟกัสเฟรมแรก — ขอโฟกัสช่องเงินสดซ้ำหลัง layout เสถียร
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _cashFocus.requestFocus();
+      });
+    });
   }
 
   @override
   void dispose() {
-    _cashReceivedController.dispose();
+    _cashController.removeListener(_onCashChanged);
+    _transferController.removeListener(_onTransferChanged);
+    _cashController.dispose();
+    _transferController.dispose();
+    _cashFocus.dispose();
+    _transferFocus.dispose();
     super.dispose();
   }
 
-  double? get _parsedCash {
-    final t = _cashReceivedController.text.trim();
-    if (t.isEmpty) return null;
-    return double.tryParse(t.replaceAll(',', ''));
+  static double _parseOrZero(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return 0;
+    return double.tryParse(t.replaceAll(',', '')) ?? 0;
   }
 
+  /// ยอดที่ระบบเติมให้อีกช่อง — แสดงทศนิยมเสมอ (รวม 0.00) เพื่อให้เห็นส่วนต่างทันทีขณะพิมพ์
+  static String _fmtSyncedAmount(double v) => v.toStringAsFixed(2);
+
+  double get _cash => _parseOrZero(_cashController.text);
+  double get _transfer => _parseOrZero(_transferController.text);
+  double get _totalPaid => _cash + _transfer;
+
+  /// เงินทอน: นับเมื่อมีส่วนเงินสด และยอดรวมเกินยอดสุทธิ
   double get _change {
-    if (_method != PosPaymentMethod.cash) return 0;
-    final r = _parsedCash;
-    if (r == null) return 0;
-    return r - widget.grandTotal;
+    if (_cash <= 1e-9) return 0;
+    if (_totalPaid <= widget.grandTotal + 1e-9) return 0;
+    return _totalPaid - widget.grandTotal;
   }
 
-  bool get _canConfirm {
-    if (_method == PosPaymentMethod.transfer) return true;
-    final r = _parsedCash;
-    if (r == null) return false;
-    return r >= widget.grandTotal;
+  bool get _canConfirm => _totalPaid + 1e-9 >= widget.grandTotal;
+
+  void _onCashChanged() {
+    if (_programmatic) return;
+    _programmatic = true;
+    final c = _parseOrZero(_cashController.text);
+    final g = widget.grandTotal;
+    final remainder = (g - c).clamp(0.0, double.infinity);
+    _transferController.text = _fmtSyncedAmount(remainder);
+    _programmatic = false;
+    setState(() {});
   }
 
-  /// เปิด QR พร้อมเพย์ — ถ้าโอนแล้วกดยืนยันแล้ว ปิด dialog ชำระเงินพร้อมผลลัพธ์
-  Future<void> _openPromptPayAndMaybeComplete() async {
-    if (!_canConfirm || _method != PosPaymentMethod.transfer) return;
-    final confirmed = await showPromptPayQrDialog(
-      context,
-      amount: widget.grandTotal,
-      promptPayId: widget.promptPayId,
-    );
-    if (!mounted) return;
-    if (confirmed == true) {
-      Navigator.of(context).pop(
-        PosCheckoutResult(
-          method: PosPaymentMethod.transfer,
-          change: 0,
-          printReceipt: _printReceipt,
-        ),
-      );
-    }
+  void _onTransferChanged() {
+    if (_programmatic) return;
+    _programmatic = true;
+    final t = _parseOrZero(_transferController.text);
+    final g = widget.grandTotal;
+    final remainder = (g - t).clamp(0.0, double.infinity);
+    _cashController.text = _fmtSyncedAmount(remainder);
+    _programmatic = false;
+    setState(() {});
+  }
+
+  void _exactCash() {
+    _programmatic = true;
+    final t = _parseOrZero(_transferController.text);
+    final g = widget.grandTotal;
+    _cashController.text = _fmtSyncedAmount((g - t).clamp(0.0, double.infinity));
+    _programmatic = false;
+    setState(() {});
+  }
+
+  void _exactTransfer() {
+    _programmatic = true;
+    final c = _parseOrZero(_cashController.text);
+    final g = widget.grandTotal;
+    _transferController.text = _fmtSyncedAmount((g - c).clamp(0.0, double.infinity));
+    _programmatic = false;
+    setState(() {});
+  }
+
+  PosPaymentMethod _deriveMethod(double cash, double transfer) {
+    if (cash > 1e-9 && transfer > 1e-9) return PosPaymentMethod.mixed;
+    if (transfer > 1e-9) return PosPaymentMethod.transfer;
+    return PosPaymentMethod.cash;
   }
 
   Future<void> _confirm() async {
     if (!_canConfirm) return;
-    if (_method == PosPaymentMethod.transfer) {
-      await _openPromptPayAndMaybeComplete();
-      return;
+    final cash = _cash;
+    final transfer = _transfer;
+    final method = _deriveMethod(cash, transfer);
+    final change = _change;
+
+    if (transfer > 1e-9) {
+      final confirmed = await showPromptPayQrDialog(
+        context,
+        amount: transfer,
+        promptPayId: widget.promptPayId,
+      );
+      if (!mounted) return;
+      if (confirmed != true) return;
     }
-    final r = _parsedCash!;
+
+    if (!mounted) return;
     Navigator.of(context).pop(
       PosCheckoutResult(
-        method: PosPaymentMethod.cash,
-        cashReceived: r,
-        change: r - widget.grandTotal,
+        method: method,
+        cashAmount: cash,
+        transferAmount: transfer,
+        cashReceived: cash > 1e-9 ? cash : null,
+        change: change,
         printReceipt: _printReceipt,
       ),
     );
@@ -129,10 +197,10 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
     final grand = widget.grandTotal;
 
     return AlertDialog(
-      title: const Text('ชำระเงิน'),
-      content: SingleChildScrollView(
+        title: const Text('ชำระเงิน'),
+        content: SingleChildScrollView(
         child: SizedBox(
-          width: 400,
+          width: 420,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -146,118 +214,145 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
               const SizedBox(height: 4),
               Text(
                 '฿${grand.toStringAsFixed(2)}',
-                style: theme.textTheme.headlineSmall?.copyWith(
+                style: theme.textTheme.headlineLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: theme.colorScheme.primary,
+                  height: 1.15,
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               Text(
-                'วิธีชำระ',
+                'แบ่งชำระ (เงินสด / โอน)',
                 style: theme.textTheme.titleSmall?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 8),
-              SegmentedButton<PosPaymentMethod>(
-                segments: const [
-                  ButtonSegment(
-                    value: PosPaymentMethod.cash,
-                    label: Text('เงินสด'),
-                    icon: Icon(Icons.payments_outlined),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _cashController,
+                      focusNode: _cashFocus,
+                      autofocus: true,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                      ],
+                      decoration: InputDecoration(
+                        labelText: 'ยอดเงินสด',
+                        prefixText: '฿ ',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                      ),
+                    ),
                   ),
-                  ButtonSegment(
-                    value: PosPaymentMethod.transfer,
-                    label: Text('โอนเงิน'),
-                    icon: Icon(Icons.account_balance_outlined),
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: TextButton(
+                      onPressed: _exactCash,
+                      child: const Text('จ่ายพอดี'),
+                    ),
                   ),
                 ],
-                selected: {_method},
-                onSelectionChanged: (s) {
-                  final next = s.first;
-                  setState(() => _method = next);
-                  if (next == PosPaymentMethod.transfer) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) unawaited(_openPromptPayAndMaybeComplete());
-                    });
-                  }
-                },
               ),
-              if (_method == PosPaymentMethod.transfer) ...[
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _transferController,
+                      focusNode: _transferFocus,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                      ],
+                      decoration: InputDecoration(
+                        labelText: 'ยอดเงินโอน',
+                        prefixText: '฿ ',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: TextButton(
+                      onPressed: _exactTransfer,
+                      child: const Text('จ่ายพอดี'),
+                    ),
+                  ),
+                ],
+              ),
+              if (_transfer > 1e-9) ...[
                 const SizedBox(height: 8),
                 Text(
-                  'เปิด QR พร้อมเพย์ทันที — ถ้าปิดไปก่อน กด «ยืนยันชำระ» อีกครั้งเพื่อสแกนใหม่',
+                  'เมื่อกดยืนยัน จะเปิด QR พร้อมเพย์ตามยอดโอน — ถ้าปิดไปก่อน กด «ยืนยันชำระ» อีกครั้ง',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                     height: 1.35,
                   ),
                 ),
               ],
-              if (_method == PosPaymentMethod.cash) ...[
-                const SizedBox(height: 20),
-                TextField(
-                  controller: _cashReceivedController,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
-                  ],
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: 'รับเงิน (บาท)',
-                    prefixText: '฿ ',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    filled: true,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primaryContainer.withValues(
-                      alpha: 0.35,
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'เงินทอน',
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '฿${_change < 0 ? '—' : _change.toStringAsFixed(2)}',
-                          style: theme.textTheme.displaySmall?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            color: _change < 0
-                                ? theme.colorScheme.error
-                                : theme.colorScheme.primary,
-                          ),
-                        ),
-                        if (_parsedCash != null && _change < 0)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              'รับเงินไม่พอ',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.error,
-                              ),
-                            ),
-                          ),
-                      ],
+              const SizedBox(height: 12),
+              Text(
+                'รวมกรอก: ฿${_totalPaid.toStringAsFixed(2)}',
+                style: theme.textTheme.bodyMedium,
+              ),
+              if (!_canConfirm)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'ยอดรวมต้องไม่น้อยกว่ายอดสุทธิ',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.error,
                     ),
                   ),
                 ),
-              ],
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer.withValues(
+                    alpha: 0.35,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'เงินทอน (เมื่อมีเงินสดและจ่ายเกิน)',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '฿${_change.toStringAsFixed(2)}',
+                        style: theme.textTheme.displaySmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
               SwitchListTile(
                 value: _printReceipt,
                 onChanged: (v) => setState(() => _printReceipt = v),
@@ -275,7 +370,7 @@ class _CheckoutDialogBodyState extends State<_CheckoutDialogBody> {
           child: const Text('ยกเลิก'),
         ),
         FilledButton(
-          onPressed: _canConfirm ? () => _confirm() : null,
+          onPressed: _canConfirm ? () => unawaited(_confirm()) : null,
           child: const Text('ยืนยันชำระ'),
         ),
       ],

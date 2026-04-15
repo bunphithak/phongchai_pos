@@ -17,6 +17,8 @@ class SaleRecord {
     required this.vatEnabled,
     required this.grandTotal,
     required this.method,
+    this.cashAmount = 0,
+    this.transferAmount = 0,
     this.cashReceived,
     required this.change,
     this.memberName,
@@ -37,6 +39,13 @@ class SaleRecord {
   final double grandTotal;
 
   final PosPaymentMethod method;
+
+  /// ยอดแบ่งจ่ายเงินสด (ส่ง backend / รายงาน)
+  final double cashAmount;
+
+  /// ยอดแบ่งจ่ายโอน
+  final double transferAmount;
+
   final double? cashReceived;
   final double change;
 
@@ -59,6 +68,8 @@ class SaleRecord {
         'vat_enabled': vatEnabled,
         'grand_total': grandTotal,
         'method': method.name,
+        'cash_amount': cashAmount,
+        'transfer_amount': transferAmount,
         'cash_received': cashReceived,
         'change': change,
         'member_name': memberName,
@@ -82,10 +93,12 @@ class SaleRecord {
       vatEnabled: json['vat_enabled'] as bool,
       grandTotal: (json['grand_total'] as num).toDouble(),
       method: _parsePosPaymentMethod(json['method'] as String?),
+      cashAmount: _inferCashAmount(json),
+      transferAmount: _inferTransferAmount(json),
       cashReceived: json['cash_received'] != null
           ? (json['cash_received'] as num).toDouble()
           : null,
-      change: (json['change'] as num).toDouble(),
+      change: (json['change'] as num?)?.toDouble() ?? 0,
       memberName: json['member_name'] as String?,
       memberPhone: json['member_phone'] as String?,
       taxInvoiceBuyer: json['tax_invoice_buyer'] != null
@@ -114,5 +127,28 @@ class SaleRecord {
       if (v.name == raw) return v;
     }
     return PosPaymentMethod.cash;
+  }
+
+  static double _inferCashAmount(Map<String, dynamic> json) {
+    if (json['cash_amount'] != null) {
+      return (json['cash_amount'] as num).toDouble();
+    }
+    final method = _parsePosPaymentMethod(json['method'] as String?);
+    final grand = (json['grand_total'] as num).toDouble();
+    if (method == PosPaymentMethod.transfer) return 0;
+    if (json['cash_received'] != null) {
+      return (json['cash_received'] as num).toDouble();
+    }
+    return grand;
+  }
+
+  static double _inferTransferAmount(Map<String, dynamic> json) {
+    if (json['transfer_amount'] != null) {
+      return (json['transfer_amount'] as num).toDouble();
+    }
+    final method = _parsePosPaymentMethod(json['method'] as String?);
+    final grand = (json['grand_total'] as num).toDouble();
+    if (method == PosPaymentMethod.transfer) return grand;
+    return 0;
   }
 }

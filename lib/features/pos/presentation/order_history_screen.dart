@@ -124,6 +124,8 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
       vatEnabled: sale.vatEnabled,
       grandTotal: sale.grandTotal,
       method: sale.method,
+      cashAmount: sale.cashAmount,
+      transferAmount: sale.transferAmount,
       cashReceived: sale.cashReceived,
       change: sale.change,
       isBackdated: true,
@@ -336,8 +338,8 @@ class _BottomSalesSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Material(
-      elevation: 8,
-      shadowColor: Colors.black26,
+      elevation: 6,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
       color: theme.colorScheme.surfaceContainerHigh,
       child: SafeArea(
         top: false,
@@ -393,14 +395,17 @@ class _SaleHistoryCard extends StatelessWidget {
     final itemCount = sale.lines.length;
 
     return Card(
-      elevation: 0,
+      elevation: 2,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
+      surfaceTintColor: Colors.transparent,
+      color: theme.colorScheme.surface,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(
           color: hasTax
               ? const Color(0xFF81C784).withValues(alpha: 0.65)
-              : theme.colorScheme.outlineVariant,
+              : const Color(0xFFE8E8E8),
           width: hasTax ? 1.5 : 1,
         ),
       ),
@@ -708,15 +713,26 @@ class _PaymentMethodBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isCash = method == PosPaymentMethod.cash;
-    final bg = isCash
-        ? const Color(0xFFE8F5E9)
-        : const Color(0xFFE3F2FD);
-    final fg = isCash
-        ? const Color(0xFF1B5E20)
-        : const Color(0xFF0D47A1);
-    final label = isCash ? 'เงินสด' : 'โอนเงิน';
-    final icon = isCash ? Icons.payments_outlined : Icons.account_balance_outlined;
+    final (bg, fg, label, icon) = switch (method) {
+      PosPaymentMethod.cash => (
+          const Color(0xFFE8F5E9),
+          const Color(0xFF1B5E20),
+          'เงินสด',
+          Icons.payments_outlined,
+        ),
+      PosPaymentMethod.transfer => (
+          const Color(0xFFE3F2FD),
+          const Color(0xFF0D47A1),
+          'โอนเงิน',
+          Icons.account_balance_outlined,
+        ),
+      PosPaymentMethod.mixed => (
+          const Color(0xFFFFF3E0),
+          const Color(0xFFE65100),
+          'สด+โอน',
+          Icons.call_split,
+        ),
+    };
 
     return Material(
       color: bg,
