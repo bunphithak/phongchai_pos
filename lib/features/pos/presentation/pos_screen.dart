@@ -2249,7 +2249,6 @@ class _SummaryPanel extends ConsumerWidget {
           onEdit: onOpenTaxInvoiceForm,
         ),
       ],
-      const SizedBox(height: 20),
       Text(
         'เพิ่มสินค้า',
         style: theme.textTheme.titleLarge?.copyWith(
